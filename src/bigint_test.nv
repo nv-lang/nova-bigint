@@ -1,0 +1,204 @@
+// Тесты math.bigint — целые произвольной точности.
+//
+// Ф.1: ядро — сложение/вычитание, сравнение, отрицание, конверсии.
+
+module bigint
+
+import std.math.int128.{i128}
+
+// ── Константы и предикаты ──────────────────────────────────────────────────
+
+test "zero/one constants" {
+    ro z = BigInt.zero()
+    assert(z.is_zero())
+    assert(z.sign() == (0 as i8))
+
+    ro o = BigInt.one()
+    assert(!o.is_zero())
+    assert(o.sign() == (1 as i8))
+}
+
+test "is_zero / sign" {
+    assert(BigInt.zero().is_zero())
+    assert(!BigInt.one().is_zero())
+    assert((42).to_bigint().sign() == (1 as i8))
+    assert((-42).to_bigint().sign() == (-1 as i8))
+}
+
+// ── Конверсии ──────────────────────────────────────────────────────────────
+
+test "to_bigint: i64" {
+    assert((0).to_bigint().is_zero())
+    assert((1).to_bigint() == BigInt.one())
+    assert((-1).to_bigint() == -BigInt.one())
+
+    ro a = (42).to_bigint()
+    assert(a.sign() == (1 as i8))
+    ro b = (-42).to_bigint()
+    assert(b.sign() == (-1 as i8))
+}
+
+test "to_bigint: u64" {
+    ro v = (0xFFFFFFFFFFFFFFFF as u64).to_bigint()
+    assert(!v.is_zero())
+    assert(v.sign() == (1 as i8))
+}
+
+test "to_bigint: i128" {
+    ro zi = i128()
+    assert(zi.to_bigint().is_zero())
+
+    ro oi = i128(0, 1)
+    assert(oi.to_bigint() == BigInt.one())
+
+    ro ni = -i128(0, 1)
+    assert(ni.to_bigint() == -BigInt.one())
+
+    ro maxi = i128(9223372036854775807, 0xFFFFFFFFFFFFFFFF)
+    assert(maxi.to_bigint().sign() == (1 as i8))
+
+    ro mini = i128((0x8000000000000000 as u64) as i64, 0)
+    assert(mini.to_bigint().sign() == (-1 as i8))
+}
+
+test "to_int: fits" {
+    assert(BigInt.zero().to_int() == Some(0))
+    assert(BigInt.one().to_int() == Some(1))
+    assert((-BigInt.one()).to_int() == Some(-1))
+    assert((1234567890).to_bigint().to_int() == Some(1234567890))
+    assert((-1234567890).to_bigint().to_int() == Some(-1234567890))
+}
+
+test "to_int: overflow" {
+    // i128.MAX = 2^127-1 > 2^63-1, не помещается в int.
+    ro maxi = i128(9223372036854775807, 0xFFFFFFFFFFFFFFFF)
+    assert(maxi.to_bigint().to_int() == None)
+    // i128.MIN = -2^127 < -2^63, не помещается в int.
+    ro mini = i128((0x8000000000000000 as u64) as i64, 0)
+    assert(mini.to_bigint().to_int() == None)
+}
+
+// ── Сравнение ──────────────────────────────────────────────────────────────
+
+test "equal" {
+    assert(BigInt.zero() == BigInt.zero())
+    assert(BigInt.one() == BigInt.one())
+    assert(BigInt.one() != BigInt.zero())
+    assert((-BigInt.one()) == -BigInt.one())
+    assert((42).to_bigint() == (42).to_bigint())
+    assert((42).to_bigint() != (43).to_bigint())
+}
+
+test "compare: sign" {
+    assert(BigInt.one().compare(BigInt.zero()) > 0)
+    assert(BigInt.zero().compare(BigInt.one()) < 0)
+    assert((-BigInt.one()).compare(BigInt.zero()) < 0)
+    assert(BigInt.zero().compare(-BigInt.one()) > 0)
+    assert((-BigInt.one()).compare(BigInt.one()) < 0)
+    assert(BigInt.one().compare(-BigInt.one()) > 0)
+}
+
+test "compare: magnitude" {
+    // Разные длины лимбов.
+    ro a = (0xFFFFFFFF as u64).to_bigint()   // [0xFFFFFFFF] (один лимб)
+    ro b = (0x100000000 as u64).to_bigint()  // [0x00000000, 0x00000001] (два лимба)
+    assert(a.compare(b) < 0)
+    assert(b.compare(a) > 0)
+
+    // Одинаковые длины, разные значения.
+    assert((100).to_bigint().compare((50).to_bigint()) > 0)
+    assert((50).to_bigint().compare((100).to_bigint()) < 0)
+    assert((100).to_bigint().compare((100).to_bigint()) == 0)
+}
+
+test "compare: negative" {
+    assert((-BigInt.one()).compare(-BigInt.one()) == 0)
+    assert((-100).to_bigint().compare((-50).to_bigint()) < 0)
+    assert((-50).to_bigint().compare((-100).to_bigint()) > 0)
+}
+
+test "operators < и >" {
+    assert(BigInt.one() > BigInt.zero())
+    assert(BigInt.zero() < BigInt.one())
+    assert((-BigInt.one()) < BigInt.zero())
+    assert((-BigInt.one()) < BigInt.one())
+}
+
+// ── Сложение ───────────────────────────────────────────────────────────────
+
+test "plus: ноль" {
+    assert(BigInt.zero() + BigInt.zero() == BigInt.zero())
+    assert(BigInt.one() + BigInt.zero() == BigInt.one())
+    assert(BigInt.zero() + BigInt.one() == BigInt.one())
+}
+
+test "plus: положительные" {
+    assert((2).to_bigint() + (3).to_bigint() == (5).to_bigint())
+    assert((100).to_bigint() + (200).to_bigint() == (300).to_bigint())
+}
+
+test "plus: отрицательные" {
+    assert((-2).to_bigint() + (-3).to_bigint() == (-5).to_bigint())
+    assert((-100).to_bigint() + (-200).to_bigint() == (-300).to_bigint())
+}
+
+test "plus: разные знаки" {
+    assert((-5).to_bigint() + (3).to_bigint() == (-2).to_bigint())
+    assert((5).to_bigint() + (-3).to_bigint() == (2).to_bigint())
+    assert((-3).to_bigint() + (5).to_bigint() == (2).to_bigint())
+    assert((3).to_bigint() + (-5).to_bigint() == (-2).to_bigint())
+}
+
+test "plus: противоположные числа" {
+    assert((5).to_bigint() + (-5).to_bigint() == BigInt.zero())
+    assert((-5).to_bigint() + (5).to_bigint() == BigInt.zero())
+}
+
+test "plus: перенос через лимб" {
+    ro a = (0xFFFFFFFF as u64).to_bigint()
+    ro b = (1 as u64).to_bigint()
+    ro r = a + b
+    assert(r == (0x100000000 as u64).to_bigint())
+}
+
+// ── Вычитание ──────────────────────────────────────────────────────────────
+
+test "minus: ноль" {
+    assert(BigInt.zero() - BigInt.zero() == BigInt.zero())
+    assert((5).to_bigint() - BigInt.zero() == (5).to_bigint())
+    assert(BigInt.zero() - (5).to_bigint() == (-5).to_bigint())
+}
+
+test "minus: положительные" {
+    assert((10).to_bigint() - (3).to_bigint() == (7).to_bigint())
+    assert((3).to_bigint() - (10).to_bigint() == (-7).to_bigint())
+}
+
+test "minus: отрицательные" {
+    assert((-10).to_bigint() - (-3).to_bigint() == (-7).to_bigint())
+    assert((-3).to_bigint() - (-10).to_bigint() == (7).to_bigint())
+}
+
+test "minus: заём через лимб" {
+    ro a = (0x100000000 as u64).to_bigint()
+    ro b = (1 as u64).to_bigint()
+    ro r = a - b
+    assert(r == (0xFFFFFFFF as u64).to_bigint())
+}
+
+// ── Отрицание и модуль ─────────────────────────────────────────────────────
+
+test "neg" {
+    assert(-BigInt.zero() == BigInt.zero())
+    assert(-BigInt.one() == (-1).to_bigint())
+    assert(-(-1).to_bigint() == BigInt.one())
+    assert(-(42).to_bigint() == (-42).to_bigint())
+}
+
+test "abs" {
+    assert(BigInt.zero().abs() == BigInt.zero())
+    assert(BigInt.one().abs() == BigInt.one())
+    assert((-BigInt.one()).abs() == BigInt.one())
+    assert((42).to_bigint().abs() == (42).to_bigint())
+    assert((-42).to_bigint().abs() == (42).to_bigint())
+}

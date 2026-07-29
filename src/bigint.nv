@@ -1,0 +1,302 @@
+// std.math.bigint — целые произвольной точности (BigInt).
+//
+// Представление: sign (-1/0/+1) + limbs []u32 (little-endian, без ведущих
+// нулей). Ноль = sign 0 + пустые limbs (каноничен, единственное представление).
+// Все операции возвращают нормализованный результат.
+//
+// Фазы (План 235):
+//   Ф.0 — пин операторного desugar (пройден: + < == работают на heap-record)
+//   Ф.1 — ядро: сложение/вычитание величин, сравнение, отрицание (ЭТОТ ФАЙЛ)
+//   Ф.2 — умножение (Карацуба/школьное) и деление (Кнут D) — ОТДЕЛЬНАЯ ВОЛНА
+//   Ф.3 — строки (str @to_bigint / @to_str)
+
+module bigint
+
+import std.math.int128.{i128}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип и константы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Целое произвольной точности со знаком.
+///
+/// Хранится как знак (-1/0/+1) и беззнаковые 32-битные лимбы
+/// в little-endian порядке. Промежуточные вычисления — в u64.
+#stable(since = "0.1")
+export type BigInt {
+    sign i8
+    limbs []u32
+}
+
+/// Ноль.
+#stable(since = "0.1")
+export fn BigInt.zero() -> BigInt => { sign: 0 as i8, limbs: []u32.new() }
+
+/// Единица.
+#stable(since = "0.1")
+export fn BigInt.one() -> BigInt => { sign: 1 as i8, limbs: []u32.of(1) }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Приватные хелперы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Удалить ведущие нулевые лимбы (in-place).
+fn normalize(mut limbs []u32) -> () {
+    while limbs.len() > 0 && limbs[limbs.len() - 1] == 0 {
+        limbs.pop()
+    }
+}
+
+// Сложение двух беззнаковых limb-векторов. Результат может быть длиннее
+// каждого из операндов (один лимб переноса).
+fn limb_add(a []u32, b []u32) -> []u32 {
+    ro n = if a.len() > b.len() { a.len() } else { b.len() }
+    mut result = []u32.new()
+    mut carry = 0 as u64
+    for i in 0..n {
+        ro av = if i < a.len() { a[i] as u64 } else { 0 as u64 }
+        ro bv = if i < b.len() { b[i] as u64 } else { 0 as u64 }
+        ro s = av + bv + carry
+        result.push((s & 0xFFFFFFFF) as u32)
+        carry = s >> 32
+    }
+    if carry != 0 { result.push(carry as u32) }
+    result
+}
+
+// Вычитание: limbs_a - limbs_b (предусловие: a >= b по величине).
+fn limb_sub(a []u32, b []u32) -> []u32 {
+    if a.len() == 0 { return []u32.new() }
+    mut result = []u32.new()
+    mut borrow = 0 as u64
+    for i in 0..a.len() {
+        ro av = a[i] as u64
+        ro bv = if i < b.len() { b[i] as u64 } else { 0 as u64 }
+        ro subtrahend = bv + borrow
+        if av >= subtrahend {
+            result.push((av - subtrahend) as u32)
+            borrow = 0
+        } else {
+            result.push((av + 0x100000000 - subtrahend) as u32)
+            borrow = 1
+        }
+    }
+    normalize(result)
+    result
+}
+
+// Сравнение беззнаковых limb-векторов: -1 / 0 / 1.
+fn limb_compare(a []u32, b []u32) -> int {
+    if a.len() != b.len() {
+        if a.len() > b.len() { 1 } else { -1 }
+    } else {
+        mut result = 0
+        mut i = a.len()
+        while i > 0 && result == 0 {
+            i -= 1
+            if a[i] > b[i] {
+                result = 1
+            } else if a[i] < b[i] {
+                result = -1
+            }
+        }
+        result
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Значение равно нулю.
+#stable(since = "0.1")
+export fn BigInt @is_zero() -> bool => @sign == (0 as i8)
+
+/// Знак: -1 / 0 / +1.
+#stable(since = "0.1")
+export fn BigInt @sign() -> i8 => @sign
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Равенство. `!=` выводится автоматически.
+#stable(since = "0.1")
+export fn BigInt @equal(other BigInt) -> bool =>
+    @sign == other.sign && limb_compare(@limbs, other.limbs) == 0
+
+/// Полное знаковое сравнение: -1 / 0 / 1.
+#stable(since = "0.1")
+export fn BigInt @compare(other BigInt) -> int {
+    // Знаки различны — ответ по знаку.
+    if @sign != other.sign {
+        if @sign > other.sign { 1 } else { -1 }
+    } else if @sign == (0 as i8) {
+        // Оба нули.
+        0
+    } else {
+        // Оба одного знака (оба положительны или оба отрицательны).
+        // Если оба отрицательны — обратный порядок.
+        ro dir = if @sign == (1 as i8) { 1 } else { -1 }
+        dir * limb_compare(@limbs, other.limbs)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии (на источнике — §1а nv-coding-style)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Любой примитивный целый тип (`Ints`) → `BigInt`.
+///
+/// Для знаковых типов знак сохраняется; для беззнаковых — всегда
+/// неотрицательный результат.
+#stable(since = "0.1")
+export fn[T Ints] T @to_bigint() -> BigInt {
+    if @ == (0 as T) { return BigInt.zero() }
+    ro v = @ as u64
+    ro negative = @ < (0 as T)
+    ro mag = if negative { (0 as u64).wrapping_sub(v) } else { v }
+    ro lo = mag as u32
+    ro hi = (mag >> 32) as u32
+    mut limbs = []u32.new()
+    limbs.push(lo)
+    if hi != 0 { limbs.push(hi) }
+    { sign: if negative { -1 as i8 } else { 1 as i8 }, limbs }
+}
+
+/// `i128` → `BigInt` (i128 — библиотечный тип, не `Ints`, поэтому отдельно).
+#stable(since = "0.1")
+export fn i128 @to_bigint() -> BigInt {
+    if @is_zero() { return BigInt.zero() }
+    ro negative = @is_neg()
+
+    // Полная 128-битная величина как два u64.
+    ro (m_lo, m_hi) = if negative {
+        if @ == i128((0x8000000000000000 as u64) as i64, 0) {
+            // MIN = -2^127, обратное двух не представимо в i128.
+            (0 as u64, 0x8000000000000000 as u64)
+        } else {
+            ro abs_val = -@
+            (abs_val.lo, abs_val.hi as u64)
+        }
+    } else {
+        (@lo, @hi as u64)
+    }
+
+    // Разбиваем на 4 × u32 (LE).
+    mut limbs = []u32.new()
+    limbs.push(m_lo as u32)
+    limbs.push((m_lo >> 32) as u32)
+    limbs.push(m_hi as u32)
+    limbs.push((m_hi >> 32) as u32)
+    normalize(limbs)
+    { sign: if negative { -1 as i8 } else { 1 as i8 }, limbs }
+}
+
+/// В `int`, если значение помещается; иначе `None`.
+#stable(since = "0.1")
+export fn BigInt @to_int() -> Option[int] {
+    if @is_zero() { return Some(0) }
+    // int = i64, помещается ≤ 2 лимба (64 бита)
+    if @limbs.len() > 2 { return None }
+    // Собираем magnitude из лимбов.
+    ro lo = @limbs[0] as u64
+    ro hi = if @limbs.len() > 1 { @limbs[1] as u64 } else { 0 as u64 }
+    ro mag = (hi << 32) | lo
+    // Проверяем, помещается ли mag в int с учётом знака.
+    if @sign == (1 as i8) {
+        // Положительное: mag ≤ 2^63 - 1
+        if mag <= 9223372036854775807 as u64 {
+            Some(mag as int)
+        } else {
+            None
+        }
+    } else {
+        // Отрицательное: mag ≤ 2^63
+        if mag <= 9223372036854775808 as u64 {
+            Some(-(mag as int))
+        } else {
+            None
+        }
+    }
+}
+
+/// В `i128`, если значение помещается; иначе `None`.
+#stable(since = "0.1")
+export fn BigInt @to_i128() -> Option[i128] {
+    if @is_zero() { return Some(i128()) }
+    // i128 = 128 бит = 4 лимба.
+    if @limbs.len() > 4 { return None }
+    ro l0 = @limbs[0] as u64
+    ro l1 = if @limbs.len() > 1 { @limbs[1] as u64 } else { 0 as u64 }
+    ro l2 = if @limbs.len() > 2 { @limbs[2] as u64 } else { 0 as u64 }
+    ro l3 = if @limbs.len() > 3 { @limbs[3] as u64 } else { 0 as u64 }
+    ro lo = l0 | (l1 << 32)
+    ro hi = l2 | (l3 << 32)
+    ro v = i128(hi as i64, lo)
+    if @sign == (1 as i8) {
+        if @limbs.len() < 4 || (@limbs[3] as u32) <= 0x7FFFFFFF {
+            Some(v)
+        } else {
+            None
+        }
+    } else {
+        if @limbs.len() < 4 || (@limbs[3] as u32) <= 0x80000000 {
+            if lo == 0 && hi == 0x8000000000000000 as u64 {
+                Some(i128((0x8000000000000000 as u64) as i64, 0))
+            } else if hi < 0x8000000000000000 as u64 {
+                Some(-v)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `a + b`. Оператор `+`.
+#stable(since = "0.1")
+export fn BigInt @plus(other BigInt) -> BigInt {
+    if @is_zero() {
+        return { sign: other.sign, limbs: other.limbs.clone() }
+    }
+    if other.is_zero() {
+        return { @sign, limbs: @limbs.clone() }
+    }
+
+    if @sign == other.sign {
+        { @sign, limbs: limb_add(@limbs, other.limbs) }
+    } else {
+        ro cmp = limb_compare(@limbs, other.limbs)
+        if cmp == 0 {
+            BigInt.zero()
+        } else if cmp > 0 {
+            { @sign, limbs: limb_sub(@limbs, other.limbs) }
+        } else {
+            { sign: other.sign, limbs: limb_sub(other.limbs, @limbs) }
+        }
+    }
+}
+
+/// `a - b`. Оператор `-`.
+#stable(since = "0.1")
+export fn BigInt @minus(other BigInt) -> BigInt => @plus(-other)
+
+/// `-a`. Оператор унарного минуса.
+#stable(since = "0.1")
+export fn BigInt @neg() -> BigInt {
+    if @is_zero() { return @ }
+    ro ns = if @sign == (1 as i8) { -1 as i8 } else { 1 as i8 }
+    { sign: ns, limbs: @limbs.clone() }
+}
+
+/// Абсолютная величина.
+#stable(since = "0.1")
+export fn BigInt @abs() -> BigInt {
+    if @sign == (1 as i8) || @is_zero() { @ } else { -@ }
+}
