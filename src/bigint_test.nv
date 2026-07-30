@@ -1,6 +1,9 @@
 // Тесты math.bigint — целые произвольной точности.
-//
 // Ф.1: ядро — сложение/вычитание, сравнение, отрицание, конверсии.
+// Ф.2: умножение, деление.
+// Ф.3: строки.
+// Ф.4: мутирующие операции.
+// Ф.5: i128-конверсии, операторы.
 
 module bigint
 
@@ -11,18 +14,31 @@ import std.math.int128.{i128}
 test "zero/one constants" {
     ro z = BigInt.zero()
     assert(z.is_zero())
-    assert(z.sign() == (0 as i8))
+    ro zs = z.sign()
+    match zs { Zero => assert(true); _ => assert(false) }
 
     ro o = BigInt.one()
     assert(!o.is_zero())
-    assert(o.sign() == (1 as i8))
+    ro os = o.sign()
+    match os { Pos => assert(true); _ => assert(false) }
 }
 
-test "is_zero / sign" {
+test "is_zero / is_neg / is_one" {
     assert(BigInt.zero().is_zero())
     assert(!BigInt.one().is_zero())
-    assert((42).to_bigint().sign() == (1 as i8))
-    assert((-42).to_bigint().sign() == (-1 as i8))
+    assert(BigInt.one().is_one())
+    assert(!BigInt.zero().is_one())
+    assert(!BigInt.one().is_neg())
+    assert(((-1).to_bigint()).is_neg())
+}
+
+test "sign" {
+    ro zs = BigInt.zero().sign()
+    match zs { Zero => assert(true); _ => assert(false) }
+    ro ps = (42).to_bigint().sign()
+    match ps { Pos => assert(true); _ => assert(false) }
+    ro ns = (-42).to_bigint().sign()
+    match ns { Neg => assert(true); _ => assert(false) }
 }
 
 // ── Конверсии ──────────────────────────────────────────────────────────────
@@ -31,34 +47,34 @@ test "to_bigint: i64" {
     assert((0).to_bigint().is_zero())
     assert((1).to_bigint() == BigInt.one())
     assert((-1).to_bigint() == -BigInt.one())
-
     ro a = (42).to_bigint()
-    assert(a.sign() == (1 as i8))
+    ro sa = a.sign()
+    match sa { Pos => assert(true); _ => assert(false) }
     ro b = (-42).to_bigint()
-    assert(b.sign() == (-1 as i8))
+    ro sb = b.sign()
+    match sb { Neg => assert(true); _ => assert(false) }
 }
 
 test "to_bigint: u64" {
     ro v = (0xFFFFFFFFFFFFFFFF as u64).to_bigint()
     assert(!v.is_zero())
-    assert(v.sign() == (1 as i8))
+    ro vs = v.sign()
+    match vs { Pos => assert(true); _ => assert(false) }
 }
 
 test "to_bigint: i128" {
     ro zi = i128()
     assert(zi.to_bigint().is_zero())
-
     ro oi = i128(0, 1)
     assert(oi.to_bigint() == BigInt.one())
-
     ro ni = -i128(0, 1)
     assert(ni.to_bigint() == -BigInt.one())
-
     ro maxi = i128(9223372036854775807, 0xFFFFFFFFFFFFFFFF)
-    assert(maxi.to_bigint().sign() == (1 as i8))
-
+    ro maxs = maxi.to_bigint().sign()
+    match maxs { Pos => assert(true); _ => assert(false) }
     ro mini = i128((0x8000000000000000 as u64) as i64, 0)
-    assert(mini.to_bigint().sign() == (-1 as i8))
+    ro mins = mini.to_bigint().sign()
+    match mins { Neg => assert(true); _ => assert(false) }
 }
 
 test "to_int: fits" {
@@ -70,10 +86,8 @@ test "to_int: fits" {
 }
 
 test "to_int: overflow" {
-    // i128.MAX = 2^127-1 > 2^63-1, не помещается в int.
     ro maxi = i128(9223372036854775807, 0xFFFFFFFFFFFFFFFF)
     assert(maxi.to_bigint().to_int() == None)
-    // i128.MIN = -2^127 < -2^63, не помещается в int.
     ro mini = i128((0x8000000000000000 as u64) as i64, 0)
     assert(mini.to_bigint().to_int() == None)
 }
@@ -99,13 +113,10 @@ test "compare: sign" {
 }
 
 test "compare: magnitude" {
-    // Разные длины лимбов.
-    ro a = (0xFFFFFFFF as u64).to_bigint()   // [0xFFFFFFFF] (один лимб)
-    ro b = (0x100000000 as u64).to_bigint()  // [0x00000000, 0x00000001] (два лимба)
+    ro a = (0xFFFFFFFF as u64).to_bigint()
+    ro b = (0x100000000 as u64).to_bigint()
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
-
-    // Одинаковые длины, разные значения.
     assert((100).to_bigint().compare((50).to_bigint()) > 0)
     assert((50).to_bigint().compare((100).to_bigint()) < 0)
     assert((100).to_bigint().compare((100).to_bigint()) == 0)
@@ -201,4 +212,282 @@ test "abs" {
     assert((-BigInt.one()).abs() == BigInt.one())
     assert((42).to_bigint().abs() == (42).to_bigint())
     assert((-42).to_bigint().abs() == (42).to_bigint())
+}
+
+// ── Умножение ──────────────────────────────────────────────────────────────
+
+test "mul: ноль" {
+    assert(BigInt.zero() * BigInt.one() == BigInt.zero())
+    assert(BigInt.one() * BigInt.zero() == BigInt.zero())
+    assert(BigInt.zero() * BigInt.zero() == BigInt.zero())
+}
+
+test "mul: единица" {
+    assert(BigInt.one() * BigInt.one() == BigInt.one())
+    assert((42).to_bigint() * BigInt.one() == (42).to_bigint())
+    assert(BigInt.one() * (42).to_bigint() == (42).to_bigint())
+}
+
+test "mul: положительные" {
+    assert((6).to_bigint() * (7).to_bigint() == (42).to_bigint())
+    assert((100).to_bigint() * (200).to_bigint() == (20000).to_bigint())
+    assert((12345).to_bigint() * (6789).to_bigint() == (12345 * 6789).to_bigint())
+}
+
+test "mul: знаки" {
+    assert((-6).to_bigint() * (7).to_bigint() == (-42).to_bigint())
+    assert((6).to_bigint() * (-7).to_bigint() == (-42).to_bigint())
+    assert((-6).to_bigint() * (-7).to_bigint() == (42).to_bigint())
+}
+
+test "mul: большой перенос" {
+    ro a = (0xFFFFFFFF as u64).to_bigint()
+    ro b = (0xFFFFFFFF as u64).to_bigint()
+    ro expected = (0xFFFFFFFE00000001 as u64).to_bigint()
+    assert(a * b == expected)
+}
+
+// ── Деление ────────────────────────────────────────────────────────────────
+
+test "div_rem: ноль делимого" {
+    ro dr = BigInt.zero().div_rem((5).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            assert(q.is_zero())
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: ноль делителя" {
+    ro dr = (5).to_bigint().div_rem(BigInt.zero())
+    match dr {
+        Ok(_) => assert(false)
+        Err(DivisionByZero) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "div_rem: a < b" {
+    ro dr = (3).to_bigint().div_rem((10).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            assert(q.is_zero())
+            assert(r == (3).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: a == b" {
+    ro dr = (7).to_bigint().div_rem((7).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            assert(q == BigInt.one())
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: простые" {
+    ro dr = (100).to_bigint().div_rem((3).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            assert(q == (33).to_bigint())
+            assert(r == (1).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: знаки" {
+    // trunc-к-нулю: -7 / 3 = -2, -7 % 3 = -1
+    ro dr = (-7).to_bigint().div_rem((3).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            assert(q == (-2).to_bigint())
+            assert(r == (-1).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+    // 7 / -3 = -2, 7 % -3 = 1
+    ro dr2 = (7).to_bigint().div_rem((-3).to_bigint())
+    match dr2 {
+        Ok((q, r)) => {
+            assert(q == (-2).to_bigint())
+            assert(r == (1).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+    // -7 / -3 = 2, -7 % -3 = -1
+    ro dr3 = (-7).to_bigint().div_rem((-3).to_bigint())
+    match dr3 {
+        Ok((q, r)) => {
+            assert(q == (2).to_bigint())
+            assert(r == (-1).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div и rem: явные методы" {
+    ro d = (100).to_bigint().div((3).to_bigint())
+    match d {
+        Ok(q) => assert(q == (33).to_bigint())
+        Err(_) => assert(false)
+    }
+    ro r = (100).to_bigint().rem((3).to_bigint())
+    match r {
+        Ok(rm) => assert(rm == (1).to_bigint())
+        Err(_) => assert(false)
+    }
+}
+
+// ── Строки ─────────────────────────────────────────────────────────────────
+
+test "str to_bigint: ноль" {
+    ro r = "0".to_bigint()
+    match r {
+        Ok(v) => assert(v.is_zero())
+        Err(_) => assert(false)
+    }
+    ro r2 = "00".to_bigint()
+    match r2 {
+        Ok(v) => assert(v.is_zero())
+        Err(_) => assert(false)
+    }
+}
+
+test "str to_bigint: простые" {
+    ro r = "42".to_bigint()
+    match r {
+        Ok(v) => assert(v == (42).to_bigint())
+        Err(_) => assert(false)
+    }
+    ro r2 = "-42".to_bigint()
+    match r2 {
+        Ok(v) => assert(v == (-42).to_bigint())
+        Err(_) => assert(false)
+    }
+}
+
+test "str to_bigint: большие" {
+    ro r = "12345678901234567890".to_bigint()
+    match r {
+        Ok(v) => assert(!v.is_zero())
+        Err(_) => assert(false)
+    }
+}
+
+test "str to_bigint: ошибки" {
+    match "".to_bigint() {
+        Err(Empty) => assert(true)
+        _ => assert(false)
+    }
+    match "-".to_bigint() {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+    match "+".to_bigint() {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+    match "12a34".to_bigint() {
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "to_str: простые" {
+    assert(BigInt.zero().to_str() == "0")
+    assert(BigInt.one().to_str() == "1")
+    assert((-BigInt.one()).to_str() == "-1")
+    assert((42).to_bigint().to_str() == "42")
+    assert((-42).to_bigint().to_str() == "-42")
+}
+
+test "to_str: большие" {
+    ro v = (12345678901234567890 as u64).to_bigint()
+    assert(v.to_str() == "12345678901234567890")
+}
+
+// ── Мутирующие операции ────────────────────────────────────────────────────
+
+test "add_assign" {
+    mut a = (5).to_bigint()
+    ro b = (3).to_bigint()
+    a.add_assign(b)
+    assert(a == (8).to_bigint())
+}
+
+test "sub_assign" {
+    mut a = (10).to_bigint()
+    ro b = (3).to_bigint()
+    a.sub_assign(b)
+    assert(a == (7).to_bigint())
+}
+
+test "mul_assign" {
+    mut a = (6).to_bigint()
+    ro b = (7).to_bigint()
+    a.mul_assign(b)
+    assert(a == (42).to_bigint())
+}
+
+// ── pow ────────────────────────────────────────────────────────────────────
+
+test "pow: простые" {
+    assert((2).to_bigint().pow(0) == BigInt.one())
+    assert((2).to_bigint().pow(1) == (2).to_bigint())
+    assert((2).to_bigint().pow(3) == (8).to_bigint())
+    assert((-2).to_bigint().pow(3) == (-8).to_bigint())
+    assert((-2).to_bigint().pow(4) == (16).to_bigint())
+}
+
+// ── Знак: -0 не возникает ─────────────────────────────────────────────────
+
+test "zero is canonical" {
+    // Ноль после любой операции должен иметь Zero + пустые limbs
+    ro z1 = BigInt.zero()
+    ro z1s = z1.sign()
+    match z1s { Zero => assert(true); _ => assert(false) }
+    assert(z1.limbs.len() == 0)
+
+    ro z2 = (0).to_bigint()
+    ro z2s = z2.sign()
+    match z2s { Zero => assert(true); _ => assert(false) }
+    assert(z2.limbs.len() == 0)
+
+    ro z3 = (5).to_bigint() + (-5).to_bigint()
+    ro z3s = z3.sign()
+    match z3s { Zero => assert(true); _ => assert(false) }
+    assert(z3.limbs.len() == 0)
+
+    ro z4 = (5).to_bigint() - (5).to_bigint()
+    assert(z4.is_zero())
+}
+
+// ── Identity-тесты ─────────────────────────────────────────────────────────
+
+test "identity: (a+b)-b == a" {
+    ro a = (100).to_bigint()
+    ro b = (37).to_bigint()
+    assert((a + b) - b == a)
+    assert((a - b) + b == a)
+}
+
+test "identity: (a*b)/b == a div_rem" {
+    ro a = (42).to_bigint()
+    ro b = (7).to_bigint()
+    ro prod = a * b
+    ro dr = prod.div_rem(b)
+    match dr {
+        Ok((q, r)) => {
+            assert(q == a)
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
 }
