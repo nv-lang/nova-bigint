@@ -245,6 +245,17 @@ fn add_back(mut u []u32, v []u32, j int, n int) {
     u[j + n] = (u[j + n] as u64 + carry) as u32
 }
 
+// Сдвиг для нормализации делителя (чтобы старший лимб >= 2^31).
+fn norm_shift(x u32) -> int {
+    mut s = 0
+    mut v = x as u64
+    while v < (0x80000000 as u64) {
+        v = v * 2
+        s += 1
+    }
+    s
+}
+
 fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
     if limb_compare(a, b) < 0 {
         return ([]u32.new(), a.clone())
@@ -268,12 +279,8 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
         if rem != 0 { r.push(rem as u32) }
         return (q, r)
     }
-    // Нормализация делителя
-    ro v_top = b[n - 1] as u64
-    ro d = (4294967296 as u64) / (v_top + 1)
-    if (4294967296 as u64) % (v_top + 1) != 0 {
-        d + 1
-    }
+    ro shift = norm_shift(b[n - 1])
+    ro d = (1 as u64) << shift
     mut u_norm = []u32.new()
     mut carry = 0 as u64
     for i in 0..a.len() {
@@ -290,19 +297,19 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
         v_norm.push(prod as u32)
         carry = prod >> 32
     }
-    // carry должен быть 0 при правильно подобранном d
     ro vn = v_norm.len()
-    ro mn = u_norm.len() - vn - 1
+    ro un = u_norm.len()
+    ro mn = un - vn - 1
     ro v_hi = v_norm[vn - 1] as u64
     ro v_lo = if vn > 1 { v_norm[vn - 2] as u64 } else { 0 as u64 }
     mut q = []u32.new()
-    q.resize(mn + 1, 0 as u32)
+    for _ in 0..(mn + 1) { q.push(0 as u32) }
     for j in 0..(mn + 1) {
         ro idx = j
         ro u_hi = (u_norm[idx + vn] as u64) << 32 | (u_norm[idx + vn - 1] as u64)
         mut q_hat = u_hi / v_hi
         mut r_hat = u_hi % v_hi
-        while q_hat >= 4294967296 || q_hat * v_lo > (r_hat << 32) + (if idx + vn - 2 >= 0 { u_norm[idx + vn - 2] as u64 } else { 0 }) {
+        while q_hat >= 4294967296 || q_hat * v_lo > (r_hat << 32) + (if idx + vn >= 2 { u_norm[idx + vn - 2] as u64 } else { 0 }) {
             q_hat -= 1
             r_hat += v_hi
             if r_hat >= 4294967296 { break }
@@ -315,16 +322,25 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
         q[idx] = q_hat as u32
     }
     normalize(q)
-    // Денормализация остатка: u_norm[0..vn] / d
+    // Денормализация остатка
     mut r = []u32.new()
     carry = 0 as u64
-    for i in (0..vn).reverse() {
+    mut i = vn
+    while i > 0 {
+        i -= 1
         ro cur = (carry << 32) | (u_norm[i] as u64)
         r.push((cur / d) as u32)
         carry = cur % d
     }
-    r.reverse()
-    normalize(r)
+    // reverse r
+    mut r_rev = []u32.new()
+    i = r.len()
+    while i > 0 {
+        i -= 1
+        r_rev.push(r[i])
+    }
+    normalize(r_rev)
+    (q, r_rev)
     (q, r)
 }
 
@@ -446,25 +462,34 @@ export fn str @to_bigint() -> Result[BigInt, ParseBigIntError] {
         }
         false
     }
-    // Пропустить ведущие нули
     while start < len && bytes[start] == ('0' as u8) {
         start += 1
     }
     if start >= len { return Ok(BigInt.zero()) }
-    // Чанки по 9 цифр
     ro remaining = len - start
-    ro chunk_count = if remaining % 9 == 0 { remaining / 9 } else { remaining / 9 + 1 }
+    ro first_len = remaining % 9
+    ro real_first = if first_len == 0 { 9 } else { first_len }
     mut result = BigInt.zero()
-    for c in 0..chunk_count {
-        ro chunk_start = if c == 0 { start } else { start + remaining - (chunk_count - c) * 9 }
-        ro chunk_len = if c == 0 { remaining - (chunk_count - 1) * 9 } else { 9 }
+    mut pos = start
+    if real_first > 0 {
         mut chunk_val = 0 as u64
-        for i in 0..chunk_len {
-            ro b = bytes[chunk_start + i]
+        for i in 0..real_first {
+            ro b = bytes[pos + i]
+            if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
+            chunk_val = chunk_val * 10 + (b - ('0' as u8)) as u64
+        }
+        result = BigInt.new_raw(Pos, []u32.of(chunk_val as u32))
+        pos += real_first
+    }
+    while pos < len {
+        mut chunk_val = 0 as u64
+        for i in 0..9 {
+            ro b = bytes[pos + i]
             if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
             chunk_val = chunk_val * 10 + (b - ('0' as u8)) as u64
         }
         result = mul_limb_small(result.limbs, POW_10_9) + BigInt.new_raw(Pos, []u32.of(chunk_val as u32))
+        pos += 9
     }
     if negative { result = -result }
     Ok(result)
@@ -548,18 +573,20 @@ export fn BigInt @to_str() -> str {
     mut limbs = @limbs.clone()
     mut digits = []u8.new()
     while limbs.len() > 0 {
-        ro (q, r) = div_rem_limbs(limbs, []u32.of(POW_10_9 as u32))
-        // r < 10^9, извлекаем до 9 цифр
-        mut rem_val = r[0] as u64
-        if r.len() > 1 { rem_val = rem_val | ((r[1] as u64) << 32) }
+        ro (q, r_limbs) = div_rem_limbs(limbs, []u32.of(POW_10_9 as u32))
+        mut rem_val = if r_limbs.len() > 0 { r_limbs[0] as u64 } else { 0 as u64 }
+        if r_limbs.len() > 1 { rem_val = rem_val | ((r_limbs[1] as u64) << 32) }
+        // Всегда извлекаем ровно 9 цифр (с ведущими нулями)
         for _ in 0..9 {
             digits.push(table[(rem_val % 10) as int])
             rem_val = rem_val / 10
-            if rem_val == 0 { break }
         }
         limbs = q
     }
     digits.reverse()
+    while digits.len() > 1 && digits[0] == ('0' as u8) {
+        digits.remove(0)
+    }
     consume sb = StringBuilder.new()
     match @sign { Neg => { sb.append("-") }; _ => {} }
     sb.append(digits)
