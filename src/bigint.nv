@@ -65,7 +65,7 @@ fn limb_add(a []u32, b []u32) -> []u32 {
         ro av = if i < a.len() { a[i] as u64 } else { 0 as u64 }
         ro bv = if i < b.len() { b[i] as u64 } else { 0 as u64 }
         ro s = av + bv + carry
-        result.push((s & 0xFFFFFFFF) as u32)
+        result.push(s as u32)   // narrowing as = wraparound (D54) — маска излишня
         carry = s >> 32
     }
     if carry != 0 { result.push(carry as u32) }
