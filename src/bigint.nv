@@ -154,8 +154,7 @@ fn school_mul(a []u32, b []u32) -> []u32 {
 
 fn add_shifted(a []u32, b []u32, shift int) -> []u32 {
     ro max_len = if a.len() > b.len() + shift { a.len() } else { b.len() + shift }
-    mut result = a.clone()
-    result.append_zero(max_len - result.len())
+    mut result = a.clone().append_zero(max_len - a.len())
     mut carry = 0 as u64
     for i in 0..b.len() {
         ro k = shift + i
