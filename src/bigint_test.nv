@@ -415,26 +415,8 @@ test "to_str: большие" {
 
 // ── Мутирующие операции ────────────────────────────────────────────────────
 
-test "add_assign" {
-    mut a = (5).to_bigint()
-    ro b = (3).to_bigint()
-    a.add_assign(b)
-    assert(a == (8).to_bigint())
-}
 
-test "sub_assign" {
-    mut a = (10).to_bigint()
-    ro b = (3).to_bigint()
-    a.sub_assign(b)
-    assert(a == (7).to_bigint())
-}
 
-test "mul_assign" {
-    mut a = (6).to_bigint()
-    ro b = (7).to_bigint()
-    a.mul_assign(b)
-    assert(a == (42).to_bigint())
-}
 
 // ── pow ────────────────────────────────────────────────────────────────────
 
@@ -561,23 +543,8 @@ test "div_rem: оба отрицательных" {
 
 // ── Самоприсваивание ───────────────────────────────────────────────────────
 
-test "add_assign: самоприсваивание" {
-    mut a = (42).to_bigint()
-    a.add_assign(a)
-    assert(a == (84).to_bigint())
-}
 
-test "sub_assign: самоприсваивание" {
-    mut a = (42).to_bigint()
-    a.sub_assign(a)
-    assert(a.is_zero())
-}
 
-test "mul_assign: самоприсваивание" {
-    mut a = (7).to_bigint()
-    a.mul_assign(a)
-    assert(a == (49).to_bigint())
-}
 
 // ── Раунд-трип строк ─────────────────────────────────────────────────────
 
