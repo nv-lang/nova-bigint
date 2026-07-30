@@ -282,8 +282,8 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
         u_norm.push(prod as u32)
         carry = prod >> 32
     }
-    if carry != 0 { u_norm.push(carry as u32) }
-    u_norm.push(0 as u32)
+    u_norm.push(carry as u32)   // Кнут D1: u — ВСЕГДА ровно na+1 лимбов (carry может быть 0);
+                                 // прежний двойной push (carry + безусловный 0) давал лишний лимб
     mut v_norm = []u32.new()
     carry = 0 as u64
     for i in 0..n {
@@ -297,7 +297,12 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
     ro v_hi = v_norm[vn - 1] as u64
     ro v_lo = if vn > 1 { v_norm[vn - 2] as u64 } else { 0 as u64 }
     mut q = []u32.new().append_zero(mn + 1)
-    for j in 0..(mn + 1) {
+    // Кнут D2/D7: j идёт от СТАРШЕГО сегмента ВНИЗ (фикс 2026-07-30: прежний
+    // `for j in 0..mn+1` шёл снизу вверх — длинное деление так не работает,
+    // q_hat младших сегментов вычислялся до вычитания старших кратных; не
+    // ловилось тестами — все делители были однолимбовые, short-path n==1)
+    mut j = mn
+    while j >= 0 {
         ro idx = j
         ro u_hi = (u_norm[idx + vn] as u64) << 32 | (u_norm[idx + vn - 1] as u64)
         mut q_hat = u_hi / v_hi
@@ -313,6 +318,7 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
             q_hat -= 1
         }
         q[idx] = q_hat as u32
+        j -= 1
     }
     normalize(q)
     // Денормализация остатка
@@ -325,15 +331,11 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
         r.push((cur / d) as u32)
         carry = cur % d
     }
-    // reverse r
-    mut r_rev = []u32.new()
-    i = r.len()
-    while i > 0 {
-        i -= 1
-        r_rev.push(r[i])
-    }
-    normalize(r_rev)
-    (q, r_rev)
+    // Денормализация шла от старших лимбов — r собран big-endian; разворот в канон
+    // little-endian. (Фикс 2026-07-30: прежний код строил r_rev, но строка `(q, r_rev)`
+    // ОТБРАСЫВАЛАСЬ выражением-статментом, и возвращался неразвёрнутый r.)
+    r.reverse()
+    normalize(r)
     (q, r)
 }
 
@@ -681,6 +683,21 @@ export fn BigInt @rem(other BigInt) -> Result[BigInt, DivError] {
         Ok((_, r)) => Ok(r)
         Err(e) => Err(e)
     }
+}
+
+/// Количество десятичных цифр (V1: через to_str).
+#stable(since = "0.1")
+export fn BigInt @digits() -> int {
+    if @is_zero() { return 1 }
+    ro s = @to_str()
+    if @is_neg() { s.byte_len() - 1 } else { s.byte_len() }
+}
+
+/// Чётное ли число (младший бит).
+#stable(since = "0.1")
+export fn BigInt @is_even() -> bool {
+    if @is_zero() { return true }
+    (@limbs[0] & 1) == 0
 }
 
 /// `a` в целой степени `n` (n ≥ 0). Бинарное возведение в степень.
