@@ -135,10 +135,7 @@ const POW_10_9 u64 = 1000000000
 
 fn school_mul(a []u32, b []u32) -> []u32 {
     if a.len() == 0 || b.len() == 0 { return []u32.new() }
-    mut result = []u32.new()
-    for _ in 0..(a.len() + b.len()) {
-        result.push(0 as u32)
-    }
+    mut result = []u32.new().append_zero(a.len() + b.len())
     for i in 0..a.len() {
         ro ai = a[i] as u64
         if ai == 0 { continue }
@@ -158,9 +155,7 @@ fn school_mul(a []u32, b []u32) -> []u32 {
 fn add_shifted(a []u32, b []u32, shift int) -> []u32 {
     ro max_len = if a.len() > b.len() + shift { a.len() } else { b.len() + shift }
     mut result = a.clone()
-    while result.len() < max_len {
-        result.push(0 as u32)
-    }
+    result.append_zero(max_len - result.len())
     mut carry = 0 as u64
     for i in 0..b.len() {
         ro k = shift + i
@@ -302,8 +297,7 @@ fn div_rem_limbs(a []u32, b []u32) -> ([]u32, []u32) {
     ro mn = un - vn - 1
     ro v_hi = v_norm[vn - 1] as u64
     ro v_lo = if vn > 1 { v_norm[vn - 2] as u64 } else { 0 as u64 }
-    mut q = []u32.new()
-    for _ in 0..(mn + 1) { q.push(0 as u32) }
+    mut q = []u32.new().append_zero(mn + 1)
     for j in 0..(mn + 1) {
         ro idx = j
         ro u_hi = (u_norm[idx + vn] as u64) << 32 | (u_norm[idx + vn - 1] as u64)
