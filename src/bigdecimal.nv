@@ -107,8 +107,9 @@ fn round_by_dropping(mant_abs BigInt, drop int, rm RoundingMode, sign int, stick
     ro factor = pow10(drop)
     ro (quot, rem) = mant_abs.div_rem(factor) ?? panic("round_by_dropping: factor=10^drop, drop>0 после guard — не 0")
     ro half = factor.div((2).to_bigint()) ?? panic("round_by_dropping: 2 != 0")
-    ro gt_half = rem.compare(half) > 0 || (rem.equal(half) && sticky)
-    ro eq_half = rem.equal(half) && !sticky
+    ro cmp = rem.compare(half)   // один O(n)-проход вместо трёх (compare + equal x2)
+    ro gt_half = cmp > 0 || (cmp == 0 && sticky)
+    ro eq_half = cmp == 0 && !sticky
     ro tail = !rem.is_zero() || sticky
     ro carry = match rm {
         HalfEven => gt_half || (eq_half && !quot.is_even())
