@@ -1,0 +1,429 @@
+// Десятичное число произвольной точности: mantissa × 10^{-scale}.
+// Поверх BigInt (bigint.nv, план 235). Своей арифметики лимбов нет — вся
+// арифметика делегируется в BigInt. Карта: docs/plans/236-bigdecimal.md
+// в репе nova (план дословно отревьюирован владельцем 2026-07-30 — псевдокод
+// НЕ менять, только переносить в Nova-синтаксис).
+//
+// Value-record: копия = указатель на BigInt-мантиссу (8 байт) + scale (8 байт).
+// Ноль = { mant: BigInt.zero(), scale: 0 } — каноничная форма ПОСЛЕ normalize;
+// без normalize допустимы и другие представления нуля ({0, 5}, {0, -3}, ...) —
+// lazy-normalize (§2.4 плана): normalize НЕ вызывается в конструкторах/операциях,
+// только в @equal/@hash/явном normalize().
+
+module bigint.bigdecimal
+
+import bigint.{BigInt}
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.runtime.string_builder.{StringBuilder}
+import std.checksums.fnv.{Fnv}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Режим округления. D406-канон: варианты через `|`, PascalCase.
+/// HalfEven — banker's (Java default) · HalfUp — школьное 0.5→+1 ·
+/// HalfDown — 0.5→0 · Down — к нулю (усечение) · Up — от нуля ·
+/// Ceiling — к +∞ · Floor — к -∞.
+#stable(since = "0.1")
+export type RoundingMode enum HalfEven | HalfUp | HalfDown | Down | Up | Ceiling | Floor
+
+/// Контекст: точность (значащих цифр мантиссы, НЕ знаков после запятой) +
+/// режим округления. `precision` — инвариант ≥ 1 (0 = "unlimited" в V1 не
+/// поддержан: неограниченное 1/3 не терминируется).
+#stable(since = "0.1")
+export type MathContext value {
+    precision int
+    rm RoundingMode
+}
+
+/// Построить `MathContext`. Panic (contract) при `precision < 1`.
+#stable(since = "0.1")
+export fn MathContext.new(precision int, rm RoundingMode) -> MathContext
+    requires precision >= 1
+{
+    { precision, rm }
+}
+
+/// Ошибка разбора десятичной строки в `BigDecimal` (см. §2.9 плана 236).
+#stable(since = "0.1")
+export type ParseBigDecimalError enum
+    | Empty
+    | OnlySign
+    | InvalidCharacter
+    | MultiplePoints
+    | MultipleExponents
+    | EmptyExponent
+    | EmptyMantissa
+
+/// Десятичное число произвольной точности: значение = `mant × 10^{-scale}`.
+/// `scale` может быть отрицательным (целое с неявными конечными нулями).
+#stable(since = "0.1")
+export type BigDecimal value {
+    mant BigInt
+    scale int
+}
+
+/// Построить `BigDecimal` из мантиссы и scale напрямую (без нормализации).
+#stable(since = "0.1")
+export fn BigDecimal.new(mant BigInt, scale int) -> BigDecimal => { mant, scale }
+
+/// Ноль (каноничная форма: mant=0, scale=0).
+#stable(since = "0.1")
+export fn BigDecimal.zero() -> BigDecimal => { mant: BigInt.zero(), scale: 0 }
+
+/// Scale (десятичных знаков масштаба мантиссы) — свойство-читатель (D84).
+/// Отдельное имя `@rescale` для операции «установить scale с округлением»
+/// (Ф.0-пин №2 плана 236) — иначе конфликт со свойством-читателем поля.
+#stable(since = "0.1")
+export fn BigDecimal @scale() -> int => @scale
+
+// ──────────────────────────────────────────────────────────────────────────
+// Приватные хелперы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Знак BigInt как int: -1 / 0 / 1. Избегает импорта/квалификации Sign-enum
+/// из bigint (BigInt уже даёт предикаты is_zero/is_neg).
+fn sign_num(b BigInt) -> int {
+    if b.is_zero() { 0 } else if b.is_neg() { -1 } else { 1 }
+}
+
+/// `10^k` как BigInt, `k >= 0` во всех местах вызова.
+fn pow10(k int) -> BigInt => (10).to_bigint().pow(k as uint)
+
+/// Навесить знак на неотрицательную мантиссу (0 всегда остаётся 0 без знака).
+fn apply_sign(m BigInt, sign int) -> BigInt {
+    if m.is_zero() { BigInt.zero() }
+    else if sign < 0 { m.neg() }
+    else { m }
+}
+
+/// Общее ядро округления: отбросить РОВНО `drop` младших десятичных разрядов
+/// НЕОТРИЦАТЕЛЬНОЙ мантиссы `mant_abs`, с учётом `sticky`-хвоста (см. §2.3
+/// плана 236). Возвращает `(rounded, drop)` — БЕЗ проверки потолка значащих
+/// цифр (это забота `round_to_precision`, у `@rescale` такого потолка нет).
+fn round_by_dropping(mant_abs BigInt, drop int, rm RoundingMode, sign int, sticky bool) -> (BigInt, int) {
+    if drop <= 0 { return (mant_abs, 0) }
+    ro factor = pow10(drop)
+    ro (quot, rem) = mant_abs.div_rem(factor) ?? panic("round_by_dropping: factor=10^drop, drop>0 после guard — не 0")
+    ro half = factor.div((2).to_bigint()) ?? panic("round_by_dropping: 2 != 0")
+    ro gt_half = rem.compare(half) > 0 || (rem.equal(half) && sticky)
+    ro eq_half = rem.equal(half) && !sticky
+    ro tail = !rem.is_zero() || sticky
+    ro carry = match rm {
+        HalfEven => gt_half || (eq_half && !quot.is_even())
+        HalfUp   => gt_half || eq_half
+        HalfDown => gt_half
+        Down     => false
+        Up       => tail
+        Ceiling  => sign > 0 && tail
+        Floor    => sign < 0 && tail
+    }
+    ro rounded = if carry { quot.plus(BigInt.one()) } else { quot }
+    (rounded, drop)
+}
+
+/// `round_to_precision(mant_abs, target_precision, rm, sign, sticky)` (§2.3
+/// плана 236): отбросить младшие разряды НЕОТРИЦАТЕЛЬНОЙ мантиссы до
+/// `target_precision` значащих цифр. Возвращает `(rounded, d)` — `d` разрядов
+/// отброшено (используется вызывающим для коррекции scale); `d` может быть на
+/// 1 больше геометрического отбрасывания при carry 99→100.
+fn round_to_precision(mant_abs BigInt, target_precision int, rm RoundingMode, sign int, sticky bool) -> (BigInt, int) {
+    ro d0 = mant_abs.digits() - target_precision
+    if d0 <= 0 { return (mant_abs, 0) }
+    ro (rounded0, d1) = round_by_dropping(mant_abs, d0, rm, sign, sticky)
+    if rounded0.digits() > target_precision {
+        // carry 99→100: хвост после carry нулевой по построению — точное деление
+        ro rounded1 = rounded0.div((10).to_bigint()) ?? panic("round_to_precision: 10 != 0")
+        (rounded1, d1 + 1)
+    } else {
+        (rounded0, d1)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии (D325 R1: Result — падающие операции; Option — genuine absence)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Любой примитивный целый (`Ints`) → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn[T Ints] T @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+
+/// `i128` → `BigDecimal` (scale = 0). Явная перегрузка — `i128` не входит в `Ints`.
+#stable(since = "0.1")
+export fn i128 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+
+/// Десятичная строка → `Result[BigDecimal, ParseBigDecimalError]`.
+/// Формат (§2.9 плана 236):
+/// `[sign] (int-part ['.' [frac-part]] | '.' frac-part) [exp-part]`.
+/// `_` — разделитель разрядов, удаляется до вычисления scale (Rust/Python 3.6+
+/// стиль). Только ASCII `0`..`9` — не-ASCII цифры → `Err(InvalidCharacter)`.
+#stable(since = "0.1")
+export fn str @to_bigdecimal() -> Result[BigDecimal, ParseBigDecimalError] {
+    ro len = @byte_len()
+    if len == 0 { return Err(Empty) }
+    ro bytes = @bytes()
+    mut i = 0
+    mut negative = false
+    if bytes[0] == ('-' as u8) { negative = true; i = 1 }
+    else if bytes[0] == ('+' as u8) { i = 1 }
+    if i >= len { return Err(OnlySign) }
+
+    // int-part: цифры/`_` до '.' / 'e' / 'E' / конца строки.
+    mut int_digits = []u8.new()
+    while i < len && bytes[i] != ('.' as u8) && bytes[i] != ('e' as u8) && bytes[i] != ('E' as u8) {
+        ro b = bytes[i]
+        if b == ('_' as u8) { i += 1; continue }
+        if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
+        int_digits.push(b)
+        i += 1
+    }
+
+    // frac-part (опциональная): после '.', до 'e'/'E'/конца. Второй '.' — Err.
+    mut frac_digits = []u8.new()
+    if i < len && bytes[i] == ('.' as u8) {
+        i += 1
+        while i < len && bytes[i] != ('e' as u8) && bytes[i] != ('E' as u8) {
+            ro b = bytes[i]
+            if b == ('.' as u8) { return Err(MultiplePoints) }
+            if b == ('_' as u8) { i += 1; continue }
+            if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
+            frac_digits.push(b)
+            i += 1
+        }
+    }
+
+    if int_digits.len() == 0 && frac_digits.len() == 0 { return Err(EmptyMantissa) }
+
+    // exp-part (опциональная): 'e'/'E' [sign] digits (>=1 цифра обязательна).
+    mut exp_value = 0
+    if i < len && (bytes[i] == ('e' as u8) || bytes[i] == ('E' as u8)) {
+        i += 1
+        mut exp_neg = false
+        if i < len && bytes[i] == ('-' as u8) { exp_neg = true; i += 1 }
+        else if i < len && bytes[i] == ('+' as u8) { i += 1 }
+        mut exp_digit_count = 0
+        mut ev = 0
+        while i < len {
+            ro b = bytes[i]
+            if b == ('e' as u8) || b == ('E' as u8) { return Err(MultipleExponents) }
+            if b == ('.' as u8) { return Err(MultiplePoints) }
+            if b == ('_' as u8) { i += 1; continue }
+            if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
+            ev = ev * 10 + ((b - ('0' as u8)) as int)
+            exp_digit_count += 1
+            i += 1
+        }
+        if exp_digit_count == 0 { return Err(EmptyExponent) }
+        exp_value = if exp_neg { -ev } else { ev }
+    }
+
+    consume sb = StringBuilder.new()
+    if negative { sb.append("-") }
+    if int_digits.len() == 0 { sb.append("0") } else { sb.append(int_digits) }
+    if frac_digits.len() > 0 { sb.append(frac_digits) }
+    ro mant_str = sb.into_str()
+    ro mant = mant_str.to_bigint() ?? panic("to_bigdecimal: digits already validated ASCII 0-9 — to_bigint must succeed")
+    ro scale = (frac_digits.len() as int) - exp_value
+    Ok(BigDecimal.new(mant, scale))
+}
+
+/// `BigDecimal` → `int`, если помещается (после normalize — отрицательный
+/// scale материализуется, положительный остаточный scale = дробная часть
+/// не отбрасывается молча → `None`).
+#stable(since = "0.1")
+export fn BigDecimal @to_int() -> Option[int] {
+    ro n = @normalize()
+    if n.scale > 0 { return None }
+    ro whole = if n.scale < 0 { n.mant.times(pow10(-n.scale)) } else { n.mant }
+    whole.to_int()
+}
+
+/// `BigDecimal` → `i128`, если помещается. Явная перегрузка (i128 не в `Ints`).
+#stable(since = "0.1")
+export fn BigDecimal @to_i128() -> Option[i128] {
+    ro n = @normalize()
+    if n.scale > 0 { return None }
+    ro whole = if n.scale < 0 { n.mant.times(pow10(-n.scale)) } else { n.mant }
+    whole.to_i128()
+}
+
+/// Десятичная строковая запись. `scale_pad` — минимум цифр после запятой
+/// (дополнение справа нулями; 0 = без дополнения). Знак печатается ПЕРВЫМ —
+/// div_rem на отрицательной мантиссе теряет знак у "-0.5" (см. §2.5 плана).
+#stable(since = "0.1")
+export fn BigDecimal @to_str(scale_pad int = 0) -> str {
+    ro sign = if @mant.is_neg() { "-" } else { "" }
+    ro m = @mant.abs()
+    if @scale > 0 {
+        ro (int_part, frac) = m.div_rem(pow10(@scale)) ?? panic("to_str: 10^scale != 0")
+        ro frac_str = frac.to_str().pad_start(@scale, '0')
+        ro frac_final = if scale_pad > @scale { frac_str.pad_end(scale_pad, '0') } else { frac_str }
+        "${sign}${int_part.to_str()}.${frac_final}"
+    } else {
+        ro whole = m.times(pow10(-@scale))
+        if scale_pad > 0 {
+            ro zeros = "0".repeat(scale_pad)
+            "${sign}${whole.to_str()}.${zeros}"
+        } else {
+            "${sign}${whole.to_str()}"
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Нормализация (§2.4 плана 236) — lazy: НЕ вызывается в конструкторах/операциях
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Удалить конечные десятичные нули мантиссы (уменьшить `scale`, значение то
+/// же). ⚠ O(n²): `div_rem(10)` в цикле — приемлемо для V1 (корректность >
+/// скорость), дорого для чисел с >10⁴ конечных нулей.
+#stable(since = "0.1")
+export fn BigDecimal @normalize() -> BigDecimal {
+    if @mant.is_zero() { return BigDecimal.new(BigInt.zero(), 0) }
+    mut mant = @mant
+    mut scale = @scale
+    mut keep_going = true
+    while keep_going {
+        ro (q, rem) = mant.div_rem((10).to_bigint()) ?? panic("normalize: 10 != 0")
+        if rem.is_zero() {
+            mant = q
+            scale -= 1
+        } else {
+            keep_going = false
+        }
+    }
+    BigDecimal.new(mant, scale)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение / равенство (§2.6 плана 236)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Полное знаковое сравнение. НЕ через нормализацию, НЕ лексикографически
+/// (normalize не уравнивает scale — фикс ревью 2026-07-30): сравнить знаки;
+/// при равных — выровнять scale (домножить мантиссу с МЕНЬШИМ scale на
+/// `10^diff`) и сравнить BigInt-мантиссы.
+#stable(since = "0.1")
+export fn BigDecimal @compare(other BigDecimal) -> int {
+    ro sa = sign_num(@mant)
+    ro sb = sign_num(other.mant)
+    if sa != sb {
+        if sa > sb { 1 } else { -1 }
+    } else if @scale == other.scale {
+        @mant.compare(other.mant)
+    } else if @scale > other.scale {
+        ro other_scaled = other.mant.times(pow10(@scale - other.scale))
+        @mant.compare(other_scaled)
+    } else {
+        ro self_scaled = @mant.times(pow10(other.scale - @scale))
+        self_scaled.compare(other.mant)
+    }
+}
+
+/// Равенство. Структурное `==` на value-record (D328) здесь НЕВЕРНО — lazy
+/// normalize допускает разные `(mant, scale)` у равных значений (`1.0={10,1}`
+/// vs `1={1,0}`). `@equal` нормализует ОБА операнда перед memberwise-сравнением
+/// (паритет Rust `bigdecimal`; Ф.0-пин №1: `==` диспетчеризует в `@equal`,
+/// подтверждено пробой на value-record).
+#stable(since = "0.1")
+export fn BigDecimal @equal(other BigDecimal) -> bool {
+    ro a = @normalize()
+    ro b = other.normalize()
+    a.mant.equal(b.mant) && a.scale == b.scale
+}
+
+/// Хэш, согласованный с `@equal` — нормализует перед хэшированием.
+#stable(since = "0.1")
+export fn BigDecimal @hash() -> u64 {
+    ro n = @normalize()
+    Fnv.hash_str(n.mant.to_str()) ^ (n.scale as u64)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика — вся через BigInt (§2.2 плана 236)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `a + b`. Оператор `+` (desugar `@plus`, прецедент `str @plus`).
+#stable(since = "0.1")
+export fn BigDecimal @plus(other BigDecimal) -> BigDecimal {
+    ro scale = if @scale > other.scale { @scale } else { other.scale }
+    ro a_mant = @mant.times(pow10(scale - @scale))
+    ro b_mant = other.mant.times(pow10(scale - other.scale))
+    BigDecimal.new(a_mant.plus(b_mant), scale)
+}
+
+/// `a - b`. Оператор `-`.
+#stable(since = "0.1")
+export fn BigDecimal @minus(other BigDecimal) -> BigDecimal => @plus(other.neg())
+
+/// `-a`.
+#stable(since = "0.1")
+export fn BigDecimal @neg() -> BigDecimal => BigDecimal.new(@mant.neg(), @scale)
+
+/// Абсолютная величина.
+#stable(since = "0.1")
+export fn BigDecimal @abs() -> BigDecimal => BigDecimal.new(@mant.abs(), @scale)
+
+/// `a * b`. Оператор `*`.
+#stable(since = "0.1")
+export fn BigDecimal @times(other BigDecimal) -> BigDecimal =>
+    BigDecimal.new(@mant.times(other.mant), @scale + other.scale)
+
+/// `a / b` с явным `MathContext` (точность + округление). Оператор `/` НЕ
+/// десугарится — деление BigDecimal неоднозначно без явной точности.
+/// Деление на ноль — PANIC (contract), паритет с примитивным `int` (D423);
+/// норма ДИЗАЙНА этого плана, не только тестовый артефакт.
+#stable(since = "0.1")
+export #unverified
+fn BigDecimal @div(other BigDecimal, mc MathContext) -> BigDecimal
+    requires !other.mant.is_zero()
+{
+    ro p = mc.precision
+    ro sign = sign_num(@mant) * sign_num(other.mant)
+    ro a_abs = @mant.abs()
+    ro b_abs = other.mant.abs()
+    ro da = a_abs.digits()
+    ro db = b_abs.digits()
+    ro k_raw = p + 2 - da + db
+    ro k = if k_raw > 0 { k_raw } else { 0 }
+    ro expanded = a_abs.times(pow10(k))
+    ro (quot, rem) = expanded.div_rem(b_abs) ?? panic("@div: b_abs != 0 гарантирован requires !other.mant.is_zero()")
+    ro sticky = !rem.is_zero()
+    ro (rounded, d) = round_to_precision(quot, p, mc.rm, sign, sticky)
+    ro result_scale = @scale - other.scale + k - d
+    BigDecimal.new(apply_sign(rounded, sign), result_scale)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MathContext-округление — явные `@round`/`@rescale` (§2.5 плана 236)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Округлить до `ctx.precision` ЗНАЧАЩИХ цифр (precision-based, см. §2.3).
+#stable(since = "0.1")
+export fn BigDecimal @round(ctx MathContext) -> BigDecimal {
+    ro sign = sign_num(@mant)
+    ro abs_mant = @mant.abs()
+    ro (rounded, d) = round_to_precision(abs_mant, ctx.precision, ctx.rm, sign, false)
+    BigDecimal.new(apply_sign(rounded, sign), @scale - d)
+}
+
+/// Установить scale (десятичных ЗНАКОВ, scale-based) с округлением по `rm`.
+/// Аналог Java `setScale(int, RoundingMode)`. `target > scale` — дополнение
+/// нулями без округления; `target < scale` — округление; `target < 0` —
+/// округление до `10^{|target|}` (напр. `setScale(-2)` = до сотен).
+/// Имя `@rescale`, НЕ `@scale` — конфликт со свойством-читателем поля (D84,
+/// Ф.0-пин №2).
+#stable(since = "0.1")
+export fn BigDecimal @rescale(target int, rm RoundingMode) -> BigDecimal {
+    if target >= @scale {
+        ro pad = target - @scale
+        BigDecimal.new(@mant.times(pow10(pad)), target)
+    } else {
+        ro drop = @scale - target
+        ro sign = sign_num(@mant)
+        ro abs_mant = @mant.abs()
+        ro (rounded, _) = round_by_dropping(abs_mant, drop, rm, sign, false)
+        BigDecimal.new(apply_sign(rounded, sign), target)
+    }
+}
