@@ -1,0 +1,575 @@
+// Тесты bigdecimal — десятичное произвольной точности поверх BigInt.
+// План 236 (docs/plans/236-bigdecimal.md в репе nova).
+// Ф.1: представление/конверсии/to_str/normalize.
+// Ф.2: +/-/*, @compare/@equal (lazy-normalize gotcha).
+// Ф.3: деление — эталонные вектора (1/8, 100/8, 2/3, 1/3 @ p=1..4), sticky.
+// Ф.4: MathContext, @round/@rescale, матрица 7 режимов на границе «ровно половина».
+// Ф.5: эталонные вектора, property-тесты (PRNG seed фиксирован), edge-кейсы,
+//      round-trip строк, панические контракты (deny-zero / precision>=1).
+
+module bigint.bigdecimal_test
+
+import bigint.{BigInt}
+import bigint.bigdecimal.{BigDecimal, MathContext, RoundingMode, ParseBigDecimalError, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+
+/// Тестовый хелпер: BigDecimal из (int-мантисса, scale) напрямую.
+fn bd(m int, s int) -> BigDecimal => BigDecimal.new(m.to_bigint(), s)
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии: int/i128 → BigDecimal, str → BigDecimal (парсер), BigDecimal → str
+// ──────────────────────────────────────────────────────────────────────────
+
+test "int/i128 @to_bigdecimal: scale = 0" {
+    ro a = (42).to_bigdecimal()
+    assert(a.scale() == 0)
+    assert(a.to_str(scale_pad: 0) == "42")
+    ro b = (-7).to_bigdecimal()
+    assert(b.to_str(scale_pad: 0) == "-7")
+    ro z = (0).to_bigdecimal()
+    assert(z.to_str(scale_pad: 0) == "0")
+}
+
+test "BigDecimal.zero()" {
+    ro z = BigDecimal.zero()
+    assert(z.scale() == 0)
+    assert(z.to_str(scale_pad: 0) == "0")
+}
+
+test "@scale() читает поле (D84, Ф.0-пин №2 — имя не конфликтует с @rescale)" {
+    ro a = bd(12345, 3)
+    assert(a.scale() == 3)
+}
+
+// Таблица форматов из §2.9 плана 236 — построчно.
+test "parse: \"12.345\" -> mant=12345 scale=3" {
+    ro a = "12.345".to_bigdecimal()!!
+    assert(a.scale() == 3)
+    assert(a.equal(bd(12345, 3)))
+    assert(a.to_str(scale_pad: 0) == "12.345")
+}
+
+test "parse: \"12.340\" -> сырое {12340,3}, normalize -> {1234,2}" {
+    ro a = "12.340".to_bigdecimal()!!
+    assert(a.equal(bd(12340, 3)))          // lazy: сырое представление = 12340/1000
+    ro n = a.normalize()
+    assert(n.equal(bd(1234, 2)))
+    assert(n.to_str(scale_pad: 0) == "12.34")
+}
+
+test "parse: \".5\" -> mant=5 scale=1 (пустой int-part)" {
+    ro a = ".5".to_bigdecimal()!!
+    assert(a.equal(bd(5, 1)))
+    assert(a.to_str(scale_pad: 0) == "0.5")
+}
+
+test "parse: \"5.\" -> mant=5 scale=0 (пустой frac-part)" {
+    ro a = "5.".to_bigdecimal()!!
+    assert(a.equal(bd(5, 0)))
+    assert(a.to_str(scale_pad: 0) == "5")
+}
+
+test "parse: \"1e-3\" -> mant=1 scale=3" {
+    ro a = "1e-3".to_bigdecimal()!!
+    assert(a.equal(bd(1, 3)))
+}
+
+test "parse: \"1.5E+2\" -> mant=15 scale=-1 (отрицательный scale)" {
+    ro a = "1.5E+2".to_bigdecimal()!!
+    assert(a.equal(bd(15, -1)))
+    assert(a.to_str(scale_pad: 0) == "150")
+}
+
+test "parse: \"1_000.50\" -> mant=100050 scale=2 (`_` удалён)" {
+    ro a = "1_000.50".to_bigdecimal()!!
+    assert(a.equal(bd(100050, 2)))
+    assert(a.to_str(scale_pad: 0) == "1000.50")
+}
+
+test "parse: ошибки — \"\" Empty, \"-\" OnlySign, \".\" EmptyMantissa" {
+    match "".to_bigdecimal() {
+        Err(Empty) => assert(true)
+        _ => assert(false)
+    }
+    match "-".to_bigdecimal() {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+    match ".".to_bigdecimal() {
+        Err(EmptyMantissa) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "parse: ошибки — \"hello\" InvalidCharacter, не-ASCII цифры InvalidCharacter" {
+    match "hello".to_bigdecimal() {
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+    match "١٢٣".to_bigdecimal() {   // Arabic-indic digits — не ASCII
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "parse: ошибки — \"123.45.6\" MultiplePoints, \"1e\" EmptyExponent, \"1e2e3\" MultipleExponents" {
+    match "123.45.6".to_bigdecimal() {
+        Err(MultiplePoints) => assert(true)
+        _ => assert(false)
+    }
+    match "1e".to_bigdecimal() {
+        Err(EmptyExponent) => assert(true)
+        _ => assert(false)
+    }
+    match "1e2e3".to_bigdecimal() {
+        Err(MultipleExponents) => assert(true)
+        _ => assert(false)
+    }
+}
+
+// Round-trip: `s.to_bigdecimal()!!.to_str(scale_pad: 0) == s` для уже нормализованных строк.
+test "round-trip: to_bigdecimal().to_str(scale_pad: 0) == original (нормализованные строки)" {
+    ro cases = [
+        "0", "1", "-1", "12.345", "0.001", "100", "-100", "3.14159",
+        "999999999999999999999999999999.5",
+    ]
+    for s in cases {
+        ro parsed = s.to_bigdecimal()!!
+        assert(parsed.to_str(scale_pad: 0) == s)
+    }
+}
+
+test "to_str: scale_pad дополняет нулями справа" {
+    ro a = bd(5, 1)              // 0.5
+    assert(a.to_str(scale_pad: 4) == "0.5000")
+    ro b = bd(100, 0)            // 100 (scale<=0 ветка)
+    assert(b.to_str(scale_pad: 2) == "100.00")
+    ro c = bd(123, -2)           // 12300 (отрицательный scale, без паддинга)
+    assert(c.to_str(scale_pad: 0) == "12300")
+    assert(c.to_str(scale_pad: 2) == "12300.00")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Нормализация
+// ──────────────────────────────────────────────────────────────────────────
+
+test "normalize: убирает конечные нули мантиссы" {
+    ro a = bd(12340, 3)          // 12.340
+    ro n = a.normalize()
+    assert(n.equal(bd(1234, 2)))
+}
+
+test "normalize: ноль -> каноничная форма {0,0} при любом исходном scale" {
+    assert(bd(0, 5).normalize().equal(BigDecimal.zero()))
+    assert(bd(0, -7).normalize().equal(BigDecimal.zero()))
+    assert(bd(0, 0).normalize().equal(BigDecimal.zero()))
+}
+
+test "normalize: идемпотентно" {
+    ro a = bd(15000, 4)
+    ro n1 = a.normalize()
+    ro n2 = n1.normalize()
+    assert(n1.equal(n2))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение / равенство — §2.6: lazy-normalize gotcha (1.0 == 1), scale-align compare
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@equal: 1.0 == 1 несмотря на разные (mant,scale) — lazy normalize" {
+    ro a = bd(10, 1)   // 1.0, сырое представление
+    ro b = bd(1, 0)    // 1
+    assert(a.equal(b))
+    assert(!(a.equal(bd(2, 0))))
+}
+
+test "@compare: 1.5 vs 2 — выравнивание scale, НЕ лексикографика по (scale,mant)" {
+    // Фикс ревью 2026-07-30: лексикографика по (scale, mant) дала бы 1.5 > 2
+    // (scale 1 > scale 0). Правильно: выровнять scale и сравнить мантиссы.
+    ro a = bd(15, 1)   // 1.5
+    ro b = bd(2, 0)    // 2
+    assert(a.compare(b) < 0)
+    assert(b.compare(a) > 0)
+}
+
+test "@compare: знаки различаются — короткое замыкание без выравнивания" {
+    assert(bd(-1, 0).compare(bd(1, 0)) < 0)
+    assert(bd(1, 0).compare(bd(-1, 0)) > 0)
+    assert(bd(0, 3).compare(bd(0, -2)) == 0)
+}
+
+test "@compare: равные значения при разном scale дают 0" {
+    assert(bd(10, 1).compare(bd(1, 0)) == 0)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика: +/-/* — выравнивание scale, все комбинации знаков
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@plus: классика 0.1 + 0.2 == 0.3 (не 0.30000000000000004 как в f64)" {
+    ro a = "0.1".to_bigdecimal()!!
+    ro b = "0.2".to_bigdecimal()!!
+    ro c = a.plus(b)
+    assert(c.equal(bd(3, 1)))
+    assert(c.to_str(scale_pad: 0) == "0.3")
+}
+
+test "@plus: деньги — 19.99 + 0.01 == 20.00 ровно" {
+    ro a = bd(1999, 2)
+    ro b = bd(1, 2)
+    ro c = a.plus(b)
+    assert(c.equal(bd(2000, 2)))
+}
+
+test "@plus: разные scale выравниваются (1.5 + 2 == 3.5)" {
+    ro a = bd(15, 1)
+    ro b = bd(2, 0)
+    assert(a.plus(b).equal(bd(35, 1)))
+}
+
+test "@minus: 5 - 3.25 == 1.75" {
+    ro a = bd(5, 0)
+    ro b = bd(325, 2)
+    assert(a.minus(b).equal(bd(175, 2)))
+}
+
+test "@neg / @abs" {
+    ro a = bd(-42, 1)
+    assert(a.neg().equal(bd(42, 1)))
+    assert(a.abs().equal(bd(42, 1)))
+    assert(bd(42, 1).neg().equal(bd(-42, 1)))
+}
+
+test "@times: 1.5 * 2 == 3.0 (== 3)" {
+    ro a = bd(15, 1)
+    ro b = bd(2, 0)
+    ro c = a.times(b)
+    assert(c.equal(bd(3, 0)))
+}
+
+test "@times: знаки — (-a)*b == -(a*b), (-a)*(-b) == a*b" {
+    ro a = bd(6, 0)
+    ro b = bd(7, 0)
+    assert(a.neg().times(b).equal(a.times(b).neg()))
+    assert(a.neg().times(b.neg()).equal(a.times(b)))
+}
+
+test "степени десяти: 10^0 .. 10^5" {
+    mut cur = (1).to_bigdecimal()
+    ro expected = ["1", "10", "100", "1000", "10000", "100000"]
+    for i in 0..6 {
+        assert(cur.to_str(scale_pad: 0) == expected[i])
+        cur = cur.times((10).to_bigdecimal())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Деление — самый рискованный кусок (Ф.3). Эталонные вектора + sticky.
+// ──────────────────────────────────────────────────────────────────────────
+
+test "div: 1/8 = 0.125 (точно, p=4 HalfEven)" {
+    ro a = bd(1, 0)
+    ro b = bd(8, 0)
+    ro mc = MathContext.new(4, HalfEven)
+    assert(a.div(b, mc).to_str(scale_pad: 0) == "0.1250")
+}
+
+test "div: 100/8 = 12.5 (точно, p=4 — фикс ревью: раньше quot получал 7 цифр)" {
+    ro a = bd(100, 0)
+    ro b = bd(8, 0)
+    ro mc = MathContext.new(4, HalfEven)
+    assert(a.div(b, mc).to_str(scale_pad: 0) == "12.50")
+}
+
+test "div: 2/3 @ p=5 HalfUp -> 0.66667" {
+    ro a = bd(2, 0)
+    ro b = bd(3, 0)
+    ro mc = MathContext.new(5, HalfUp)
+    assert(a.div(b, mc).to_str(scale_pad: 0) == "0.66667")
+}
+
+test "div: 1/3 @ p=1..4 (sticky=true throughout — repeating decimal)" {
+    ro a = bd(1, 0)
+    ro b = bd(3, 0)
+    assert(a.div(b, MathContext.new(1, HalfEven)).to_str(scale_pad: 0) == "0.3")
+    assert(a.div(b, MathContext.new(2, HalfEven)).to_str(scale_pad: 0) == "0.33")
+    assert(a.div(b, MathContext.new(3, HalfEven)).to_str(scale_pad: 0) == "0.333")
+    assert(a.div(b, MathContext.new(4, HalfEven)).to_str(scale_pad: 0) == "0.3333")
+}
+
+test "div: 1/3 @ p=1 — Ceiling/Up округляют ВВЕРХ по хвосту (0.4), HalfEven/Down — 0.3" {
+    ro a = bd(1, 0)
+    ro b = bd(3, 0)
+    assert(a.div(b, MathContext.new(1, Ceiling)).to_str(scale_pad: 0) == "0.4")
+    assert(a.div(b, MathContext.new(1, Up)).to_str(scale_pad: 0) == "0.4")
+    assert(a.div(b, MathContext.new(1, Down)).to_str(scale_pad: 0) == "0.3")
+    assert(a.div(b, MathContext.new(1, HalfUp)).to_str(scale_pad: 0) == "0.3")
+}
+
+test "div: инвариант a.div(b,mc).times(b) == a при точном делении" {
+    ro a = bd(144, 0)
+    ro b = bd(12, 0)
+    ro mc = MathContext.new(10, HalfEven)
+    ro q = a.div(b, mc)
+    assert(q.equal(bd(12, 0)))
+    assert(q.times(b).equal(a))
+}
+
+test "@rescale: 2.5000001 при HalfEven -> 3 (НЕ 2 — точный остаток решает, не то что 'ровно половина')" {
+    ro x = "2.5000001".to_bigdecimal()!!
+    ro r = x.rescale(0, HalfEven)
+    assert(r.to_str(scale_pad: 0) == "3")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// @round / @rescale — матрица 7 режимов на границе «ровно половина»
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@rescale: 2.5 -> 0 знаков, все 7 режимов" {
+    ro x = bd(25, 1)   // 2.5
+    assert(x.rescale(0, HalfEven).equal(bd(2, 0)))    // к чётной (2)
+    assert(x.rescale(0, HalfUp).equal(bd(3, 0)))
+    assert(x.rescale(0, HalfDown).equal(bd(2, 0)))
+    assert(x.rescale(0, Down).equal(bd(2, 0)))
+    assert(x.rescale(0, Up).equal(bd(3, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(3, 0)))
+    assert(x.rescale(0, Floor).equal(bd(2, 0)))
+}
+
+test "@rescale: 3.5 -> 0 знаков, все 7 режимов (к чётной = 4)" {
+    ro x = bd(35, 1)   // 3.5
+    assert(x.rescale(0, HalfEven).equal(bd(4, 0)))    // к чётной (4)
+    assert(x.rescale(0, HalfUp).equal(bd(4, 0)))
+    assert(x.rescale(0, HalfDown).equal(bd(3, 0)))
+    assert(x.rescale(0, Down).equal(bd(3, 0)))
+    assert(x.rescale(0, Up).equal(bd(4, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(4, 0)))
+    assert(x.rescale(0, Floor).equal(bd(3, 0)))
+}
+
+test "@rescale: -2.5 -> 0 знаков, все 7 режимов (знак Ceiling/Floor — §2.3)" {
+    ro x = bd(-25, 1)   // -2.5
+    assert(x.rescale(0, HalfEven).equal(bd(-2, 0)))   // к чётной (-2)
+    assert(x.rescale(0, HalfUp).equal(bd(-3, 0)))      // от нуля
+    assert(x.rescale(0, HalfDown).equal(bd(-2, 0)))
+    assert(x.rescale(0, Down).equal(bd(-2, 0)))        // усечение к нулю
+    assert(x.rescale(0, Up).equal(bd(-3, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(-2, 0)))     // к +∞ (-2 > -3)
+    assert(x.rescale(0, Floor).equal(bd(-3, 0)))       // к -∞ (-3 < -2)
+}
+
+test "@rescale: target > scale — дополнение нулями без округления" {
+    ro x = bd(5, 0)   // 5
+    ro r = x.rescale(3, HalfEven)
+    assert(r.equal(bd(5000, 3)))
+    assert(r.to_str(scale_pad: 0) == "5.000")
+}
+
+test "@rescale: отрицательный target — округление до 10^|target| (сотни)" {
+    // Аналог Java setScale(-2): BigDecimal(1234,0).rescale(-2, Down) == 1200
+    ro x = bd(1234, 0)
+    ro r = x.rescale(-2, Down)
+    assert(r.equal(bd(12, -2)))
+    assert(r.to_str(scale_pad: 0) == "1200")
+}
+
+test "@round: precision-based, идемпотентно" {
+    ro x = bd(123456, 0)
+    ro mc = MathContext.new(3, HalfEven)
+    ro r1 = x.round(mc)
+    ro r2 = r1.round(mc)
+    assert(r1.equal(r2))
+    assert(r1.to_str(scale_pad: 0) == "123000")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Edge-кейсы: ноль во всех знаках scale, отрицательный/огромный/крохотный scale
+// ──────────────────────────────────────────────────────────────────────────
+
+test "edge: ноль со всеми знаками scale равны друг другу" {
+    assert(bd(0, 5).equal(bd(0, 0)))
+    assert(bd(0, -5).equal(bd(0, 0)))
+    assert(bd(0, 5).equal(bd(0, -5)))
+    assert(bd(0, 5).compare(bd(0, -5)) == 0)
+}
+
+test "edge: очень большой отрицательный scale материализуется корректно" {
+    ro x = bd(123, -2)     // 123 * 10^2 = 12300
+    assert(x.to_str(scale_pad: 0) == "12300")
+    assert(x.to_int() == Some(12300))
+}
+
+test "edge: очень большой положительный scale — крохотное число" {
+    ro x = bd(1, 1000)     // 10^-1000, крохотное, но точное
+    ro s = x.to_str(scale_pad: 0)
+    // "0." + 999 нулей + "1" = 2 + 1000 символов
+    assert(s.byte_len() == 1002)
+    assert(x.to_int() == None)   // не целое
+}
+
+test "edge: @to_int/@to_i128 — fits-проверка через normalize (в т.ч. отрицательный scale)" {
+    assert(bd(5, 0).to_int() == Some(5))
+    assert(bd(50, 1).to_int() == Some(5))      // normalize: 5.0 -> 5
+    assert(bd(500, -1).to_int() == Some(5000)) // отрицательный scale материализуется
+    assert(bd(5, 1).to_int() == None)          // 0.5 — не целое
+    assert(bd(5, 0).to_i128() == Some((5).to_i128()))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Панические контракты — деление на ноль (D423), MathContext.precision>=1
+// ──────────────────────────────────────────────────────────────────────────
+
+// NB (дефект компилятора — см. отчёт плана 236): `requires !other.mant.is_zero()`
+// на #unverified `@div` не паникует ДО тела (call-expression в контракте под
+// #unverified не enforce'ится в рантайме, вопреки docs/contracts.ru.md).
+// Деление на ноль ВСЁ РАВНО паникует — через внутренний защитный
+// `?? panic(...)` на Err от BigInt.div_rem — паритет с int (D423) сохранён
+// функционально, просто другим путём. Паттерн ниже — фактическое сообщение.
+test "div: деление на ноль паникует (паритет int, D423) — panics-клаузула" panics "b_abs != 0" {
+    ro a = bd(5, 0)
+    ro mc = MathContext.new(5, HalfEven)
+    ro _ = a.div(BigDecimal.zero(), mc)
+}
+
+test "MathContext.new(0, ...) паникует — контракт precision >= 1" panics "requires failed" {
+    ro _ = MathContext.new(0, HalfEven)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// @round / @rescale — матрица 7 режимов на границе «ровно половина»
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@rescale: 2.5 -> 0 знаков, все 7 режимов" {
+    ro x = bd(25, 1)   // 2.5
+    assert(x.rescale(0, HalfEven).equal(bd(2, 0)))    // к чётной (2)
+    assert(x.rescale(0, HalfUp).equal(bd(3, 0)))
+    assert(x.rescale(0, HalfDown).equal(bd(2, 0)))
+    assert(x.rescale(0, Down).equal(bd(2, 0)))
+    assert(x.rescale(0, Up).equal(bd(3, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(3, 0)))
+    assert(x.rescale(0, Floor).equal(bd(2, 0)))
+}
+
+test "@rescale: 3.5 -> 0 знаков, все 7 режимов (к чётной = 4)" {
+    ro x = bd(35, 1)   // 3.5
+    assert(x.rescale(0, HalfEven).equal(bd(4, 0)))    // к чётной (4)
+    assert(x.rescale(0, HalfUp).equal(bd(4, 0)))
+    assert(x.rescale(0, HalfDown).equal(bd(3, 0)))
+    assert(x.rescale(0, Down).equal(bd(3, 0)))
+    assert(x.rescale(0, Up).equal(bd(4, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(4, 0)))
+    assert(x.rescale(0, Floor).equal(bd(3, 0)))
+}
+
+test "@rescale: -2.5 -> 0 знаков, все 7 режимов (знак Ceiling/Floor — §2.3)" {
+    ro x = bd(-25, 1)   // -2.5
+    assert(x.rescale(0, HalfEven).equal(bd(-2, 0)))   // к чётной (-2)
+    assert(x.rescale(0, HalfUp).equal(bd(-3, 0)))      // от нуля
+    assert(x.rescale(0, HalfDown).equal(bd(-2, 0)))
+    assert(x.rescale(0, Down).equal(bd(-2, 0)))        // усечение к нулю
+    assert(x.rescale(0, Up).equal(bd(-3, 0)))
+    assert(x.rescale(0, Ceiling).equal(bd(-2, 0)))     // к +∞ (-2 > -3)
+    assert(x.rescale(0, Floor).equal(bd(-3, 0)))       // к -∞ (-3 < -2)
+}
+
+test "@rescale: target > scale — дополнение нулями без округления" {
+    ro x = bd(5, 0)   // 5
+    ro r = x.rescale(3, HalfEven)
+    assert(r.equal(bd(5000, 3)))
+    assert(r.to_str(scale_pad: 0) == "5.000")
+}
+
+test "@rescale: отрицательный target — округление до 10^|target| (сотни)" {
+    // Аналог Java setScale(-2): BigDecimal(1234,0).rescale(-2, Down) == 1200
+    ro x = bd(1234, 0)
+    ro r = x.rescale(-2, Down)
+    assert(r.equal(bd(12, -2)))
+    assert(r.to_str(scale_pad: 0) == "1200")
+}
+
+test "@round: precision-based, идемпотентно" {
+    ro x = bd(123456, 0)
+    ro mc = MathContext.new(3, HalfEven)
+    ro r1 = x.round(mc)
+    ro r2 = r1.round(mc)
+    assert(r1.equal(r2))
+    assert(r1.to_str(scale_pad: 0) == "123000")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Property-тесты — PRNG с фиксированным сидом.
+//
+// splitmix64 — тот же алгоритм, что в std.testing.handlers (public-domain
+// PRNG), реализован ЛОКАЛЬНО (не импортирован): импорт std.testing.handlers/
+// property в этом пакете триггерит компиляторный дефект (см. отчёт —
+// cross-module const collision `math.int128.ZERO` vs `time.duration.ZERO`
+// при монобилде внешнего пакета) — прецедент локальной реализации без
+// Random-эффекта уже есть в examples/flagship/aggregator/scenarios.nv.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn splitmix64_step(seed u64) -> u64 {
+    mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    z ^ (z >> 31)
+}
+
+/// int в диапазоне [lo, hi] (включительно) из PRNG-состояния.
+fn rand_range(state u64, lo int, hi int) -> int {
+    ro span = (hi - lo + 1) as u64
+    lo + (state % span) as int
+}
+
+test "property: (a+b)-b == a, seed=7, N=300" {
+    mut state = splitmix64_step(7)
+    for _ in 0..300 {
+        ro av = rand_range(state, -1000000, 1000000); state = splitmix64_step(state)
+        ro bv = rand_range(state, -1000000, 1000000); state = splitmix64_step(state)
+        ro asN = rand_range(state, 0, 8); state = splitmix64_step(state)
+        ro bsN = rand_range(state, 0, 8); state = splitmix64_step(state)
+        ro a = bd(av, asN)
+        ro b = bd(bv, bsN)
+        ro lhs = a.plus(b).minus(b)
+        assert(lhs.equal(a))
+    }
+}
+
+test "property: a*b == b*a, seed=13, N=300" {
+    mut state = splitmix64_step(13)
+    for _ in 0..300 {
+        ro av = rand_range(state, -100000, 100000); state = splitmix64_step(state)
+        ro bv = rand_range(state, -100000, 100000); state = splitmix64_step(state)
+        ro asN = rand_range(state, 0, 5); state = splitmix64_step(state)
+        ro bsN = rand_range(state, 0, 5); state = splitmix64_step(state)
+        ro a = bd(av, asN)
+        ro b = bd(bv, bsN)
+        assert(a.times(b).equal(b.times(a)))
+    }
+}
+
+test "property: round(round(x)) == round(x) — идемпотентность, seed=21, N=200" {
+    mut state = splitmix64_step(21)
+    for _ in 0..200 {
+        ro av = rand_range(state, -1000000000, 1000000000); state = splitmix64_step(state)
+        ro asN = rand_range(state, 0, 8); state = splitmix64_step(state)
+        ro a = bd(av, asN)
+        ro mc = MathContext.new(5, HalfEven)
+        ro r1 = a.round(mc)
+        ro r2 = r1.round(mc)
+        assert(r2.equal(r1))
+    }
+}
+
+test "property: div-then-times round-trip при точном делении, seed=99, N=200" {
+    mut state = splitmix64_step(99)
+    for _ in 0..200 {
+        ro bv = rand_range(state, 1, 50); state = splitmix64_step(state)
+        ro kv = rand_range(state, 1, 100000); state = splitmix64_step(state)
+        ro b = bd(bv, 0)
+        ro a = bd(bv * kv, 0)
+        ro mc = MathContext.new(20, HalfEven)
+        ro q = a.div(b, mc)
+        ro back = q.times(b)
+        assert(back.equal(a))
+    }
+}

@@ -145,9 +145,47 @@ fn round_to_precision(mant_abs BigInt, target_precision int, rm RoundingMode, si
 // Конверсии (D325 R1: Result — падающие операции; Option — genuine absence)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Любой примитивный целый (`Ints`) → `BigDecimal` (scale = 0).
+// Явные перегрузки на КАЖДЫЙ член `Ints` (i8|i16|i32|i64|int|u8|u16|u32|u64|uint),
+// НЕ единая `fn[T Ints] T @to_bigdecimal()`. Причина — компиляторный дефект
+// (см. отчёт плана 236): generic-функция (bigdecimal.nv), вызывающая ДРУГУЮ
+// generic-функцию (bigint.nv `fn[T Ints] T @to_bigint()`) из СВОЕГО generic-
+// тела, не монообразуется — codegen эмиттирует вызов неразрешённого generic-
+// плейсхолдера, возвращающего исходный `int` вместо `BigInt` (C: "initializing
+// NovaValue_BigInt with an expression of incompatible type 'int'"). Конкретная
+// (не generic) функция, вызывающая generic `@to_bigint()`, монообразуется
+// нормально — минимальный репро отдельно приложен в отчёте. Ровно этот fallback
+// уже был предусмотрен риском плана 236 (§5): "Ints… не готов → явные
+// перегрузки… как fallback".
+/// `i8` → `BigDecimal` (scale = 0).
 #stable(since = "0.1")
-export fn[T Ints] T @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+export fn i8 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `i16` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn i16 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `i32` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn i32 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `i64` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn i64 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `int` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn int @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `u8` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn u8 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `u16` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn u16 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `u32` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn u32 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `u64` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn u64 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
+/// `uint` → `BigDecimal` (scale = 0).
+#stable(since = "0.1")
+export fn uint @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
 
 /// `i128` → `BigDecimal` (scale = 0). Явная перегрузка — `i128` не входит в `Ints`.
 #stable(since = "0.1")
