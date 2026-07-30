@@ -446,6 +446,226 @@ test "pow: простые" {
     assert((-2).to_bigint().pow(4) == (16).to_bigint())
 }
 
+// ── Деление — крайние случаи ──────────────────────────────────────────────
+
+test "div_rem: делитель длиннее делимого" {
+    // |a| < |b|, частное = 0, остаток = a
+    ro a = (100).to_bigint()
+    ro b = (0xFFFFFFFF as u64).to_bigint() * (0xFFFFFFFF as u64).to_bigint()
+    ro dr = a.div_rem(b)
+    match dr {
+        Ok((q, r)) => {
+            assert(q.is_zero())
+            assert(r == a)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: равные числа" {
+    ro a = (12345).to_bigint()
+    ro dr = a.div_rem(a)
+    match dr {
+        Ok((q, r)) => {
+            assert(q == BigInt.one())
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: степень двойки" {
+    ro a = (1024).to_bigint()
+    ro b = (2).to_bigint()
+    ro dr = a.div_rem(b)
+    match dr {
+        Ok((q, r)) => {
+            assert(q == (512).to_bigint())
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: одна цифра делителя" {
+    ro a = (999999).to_bigint()
+    ro b = (9).to_bigint()
+    ro dr = a.div_rem(b)
+    match dr {
+        Ok((q, r)) => {
+            assert(q == (111111).to_bigint())
+            assert(r.is_zero())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: операнды разной длины" {
+    // a большое, b маленькое
+    ro a = (0xFFFFFFFF as u64).to_bigint() * (0xFFFFFFFF as u64).to_bigint()
+    ro b = (3).to_bigint()
+    ro dr = a.div_rem(b)
+    match dr {
+        Ok((q, r)) => {
+            // identity: a == q * b + r
+            assert(a == q * b + r)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: отрицательное / положительное" {
+    ro dr = (-100).to_bigint().div_rem((7).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            // trunc-к-нулю: -100/7 = -14, -100%7 = -2
+            // -14*7 + (-2) = -98 - 2 = -100 ✓
+            ro check = q * (7).to_bigint() + r == (-100).to_bigint()
+            assert(check)
+            assert(q == (-14).to_bigint())
+            assert(r == (-2).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: положительное / отрицательное" {
+    ro dr = (100).to_bigint().div_rem((-7).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            // trunc-к-нулю: 100/-7 = -14, 100%-7 = 2
+            // -14*(-7) + 2 = 98 + 2 = 100 ✓
+            ro check = q * (-7).to_bigint() + r == (100).to_bigint()
+            assert(check)
+            assert(q == (-14).to_bigint())
+            assert(r == (2).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "div_rem: оба отрицательных" {
+    ro dr = (-100).to_bigint().div_rem((-7).to_bigint())
+    match dr {
+        Ok((q, r)) => {
+            // trunc-к-нулю: -100/-7 = 14, -100%-7 = -2
+            // 14*(-7) + (-2) = -98 - 2 = -100 ✓
+            ro check = q * (-7).to_bigint() + r == (-100).to_bigint()
+            assert(check)
+            assert(q == (14).to_bigint())
+            assert(r == (-2).to_bigint())
+        }
+        Err(_) => assert(false)
+    }
+}
+
+// ── Самоприсваивание ───────────────────────────────────────────────────────
+
+test "add_assign: самоприсваивание" {
+    mut a = (42).to_bigint()
+    a.add_assign(a)
+    assert(a == (84).to_bigint())
+}
+
+test "sub_assign: самоприсваивание" {
+    mut a = (42).to_bigint()
+    a.sub_assign(a)
+    assert(a.is_zero())
+}
+
+test "mul_assign: самоприсваивание" {
+    mut a = (7).to_bigint()
+    a.mul_assign(a)
+    assert(a == (49).to_bigint())
+}
+
+// ── Раунд-трип строк ─────────────────────────────────────────────────────
+
+test "to_str round-trip: степени десяти" {
+    ro p1 = "1".to_bigint()
+    match p1 { Ok(v) => assert(v.to_str() == "1"); Err(_) => assert(false) }
+    ro p2 = "10".to_bigint()
+    match p2 { Ok(v) => assert(v.to_str() == "10"); Err(_) => assert(false) }
+    ro p3 = "100".to_bigint()
+    match p3 { Ok(v) => assert(v.to_str() == "100"); Err(_) => assert(false) }
+    ro p4 = "1000000".to_bigint()
+    match p4 { Ok(v) => assert(v.to_str() == "1000000"); Err(_) => assert(false) }
+    ro p5 = "1000000000".to_bigint()
+    match p5 { Ok(v) => assert(v.to_str() == "1000000000"); Err(_) => assert(false) }
+    ro p6 = "10000000000000000000".to_bigint()
+    match p6 { Ok(v) => assert(v.to_str() == "10000000000000000000"); Err(_) => assert(false) }
+}
+
+test "to_str round-trip: большие числа" {
+    ro s = "123456789012345678901234567890"
+    ro parsed = s.to_bigint()
+    match parsed {
+        Ok(v) => {
+            ro result = v.to_str()
+            assert(result == s)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "to_str round-trip: отрицательные" {
+    ro s = "-98765432109876543210"
+    ro parsed = s.to_bigint()
+    match parsed {
+        Ok(v) => {
+            ro result = v.to_str()
+            assert(result == s)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+// ── Инварианты представления ───────────────────────────────────────────────
+
+test "invariant: нет ведущих нулевых лимбов" {
+    ro a = (256).to_bigint()
+    // a.limbs = [0, 1] после нормализации должно быть [0, 1]
+    // Убеждаемся, что нет ведущих нулей
+    if a.limbs.len() > 0 {
+        assert(a.limbs[a.limbs.len() - 1] != 0)
+    }
+    // После mul
+    ro p = a * (2).to_bigint()
+    if p.limbs.len() > 0 {
+        assert(p.limbs[p.limbs.len() - 1] != 0)
+    }
+}
+
+test "invariant: ноль === Zero + пустые лимбы" {
+    ro z = BigInt.zero()
+    ro zs = z.sign()
+    match zs { Zero => assert(true); _ => assert(false) }
+    assert(z.limbs.len() == 0)
+
+    ro z2 = (5).to_bigint() + (-5).to_bigint()
+    ro z2s = z2.sign()
+    match z2s { Zero => assert(true); _ => assert(false) }
+    assert(z2.limbs.len() == 0)
+
+    ro z3 = (5).to_bigint() * (0).to_bigint()
+    ro z3s = z3.sign()
+    match z3s { Zero => assert(true); _ => assert(false) }
+}
+
+// ── Операторные desugar ────────────────────────────────────────────────────
+
+test "operator: + - * < > == !=" {
+    ro a = (42).to_bigint()
+    ro b = (10).to_bigint()
+    assert(a + b == (52).to_bigint())
+    assert(a - b == (32).to_bigint())
+    assert(a * b == (420).to_bigint())
+    assert(a > b)
+    assert(b < a)
+    assert(a == a)
+    assert(a != b)
+}
+
 // ── Знак: -0 не возникает ─────────────────────────────────────────────────
 
 test "zero is canonical" {

@@ -716,35 +716,43 @@ export fn BigInt @pow(n uint) -> BigInt {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Прибавляет `other` к `self`, переиспользуя буфер лимбов.
-/// Проверяет самоприсваивание: если `self == other` разделяют данные,
+/// Проверяет самоприсваивание: если `self` и `other` разделяют данные,
 /// клонирует перед мутацией.
 #stable(since = "0.1")
 export fn BigInt mut @add_assign(other BigInt) {
     ro result = @plus(other)
-    // Если лимбы разделяются с other, клонируем
     ro same_data = @limbs.ptr() == other.limbs.ptr()
     if same_data {
         @limbs = @limbs.clone()
-    } else {
-        @limbs.clear()
     }
+    @limbs.clear()
     @sign = result.sign
     for v in result.limbs { @limbs.push(v) }
 }
 
 /// Вычитает `other` из `self`, переиспользуя буфер лимбов.
+/// Проверяет самоприсваивание.
 #stable(since = "0.1")
 export fn BigInt mut @sub_assign(other BigInt) {
     ro result = @minus(other)
+    ro same_data = @limbs.ptr() == other.limbs.ptr()
+    if same_data {
+        @limbs = @limbs.clone()
+    }
     @limbs.clear()
     @sign = result.sign
     for v in result.limbs { @limbs.push(v) }
 }
 
 /// Умножает `self` на `other`, переиспользуя буфер лимбов.
+/// Проверяет самоприсваивание.
 #stable(since = "0.1")
 export fn BigInt mut @mul_assign(other BigInt) {
     ro result = @times(other)
+    ro same_data = @limbs.ptr() == other.limbs.ptr()
+    if same_data {
+        @limbs = @limbs.clone()
+    }
     @limbs.clear()
     @sign = result.sign
     for v in result.limbs { @limbs.push(v) }
