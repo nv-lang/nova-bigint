@@ -120,7 +120,7 @@ fn round_by_dropping(mant_abs BigInt, drop int, rm RoundingMode, sign int, stick
         Ceiling  => sign > 0 && tail
         Floor    => sign < 0 && tail
     }
-    ro rounded = if carry { quot.plus(BigInt.one()) } else { quot }
+    ro rounded = if carry { quot + BigInt.one() } else { quot }
     (rounded, drop)
 }
 
@@ -274,7 +274,7 @@ export fn str @to_bigdecimal() -> Result[BigDecimal, ParseBigDecimalError] {
 export fn BigDecimal @to_int() -> Option[int] {
     ro n = @normalize()
     if n.scale > 0 { return None }
-    ro whole = if n.scale < 0 { n.mant.times(pow10(-n.scale)) } else { n.mant }
+    ro whole = if n.scale < 0 { n.mant * pow10(-n.scale) } else { n.mant }
     whole.to_int()
 }
 
@@ -283,7 +283,7 @@ export fn BigDecimal @to_int() -> Option[int] {
 export fn BigDecimal @to_i128() -> Option[i128] {
     ro n = @normalize()
     if n.scale > 0 { return None }
-    ro whole = if n.scale < 0 { n.mant.times(pow10(-n.scale)) } else { n.mant }
+    ro whole = if n.scale < 0 { n.mant * pow10(-n.scale) } else { n.mant }
     whole.to_i128()
 }
 
@@ -298,14 +298,14 @@ export fn BigDecimal @to_str(scale_pad int = 0) -> str {
         ro (int_part, frac) = m.div_rem(pow10(@scale)) ?? panic("to_str: 10^scale != 0")
         ro frac_str = frac.to_str().pad_start(@scale, '0')
         ro frac_final = if scale_pad > @scale { frac_str.pad_end(scale_pad, '0') } else { frac_str }
-        "${sign}${int_part.to_str()}.${frac_final}"
+        "${sign}${int_part}.${frac_final}"
     } else {
-        ro whole = m.times(pow10(-@scale))
+        ro whole = m * pow10(-@scale)
         if scale_pad > 0 {
             ro zeros = "0".repeat(scale_pad)
-            "${sign}${whole.to_str()}.${zeros}"
+            "${sign}${whole}.${zeros}"
         } else {
-            "${sign}${whole.to_str()}"
+            "${sign}${whole}"
         }
     }
 }
@@ -352,10 +352,10 @@ export fn BigDecimal @compare(other BigDecimal) -> int {
     } else if @scale == other.scale {
         @mant.compare(other.mant)
     } else if @scale > other.scale {
-        ro other_scaled = other.mant.times(pow10(@scale - other.scale))
+        ro other_scaled = other.mant * pow10(@scale - other.scale)
         @mant.compare(other_scaled)
     } else {
-        ro self_scaled = @mant.times(pow10(other.scale - @scale))
+        ro self_scaled = @mant * pow10(other.scale - @scale)
         self_scaled.compare(other.mant)
     }
 }
@@ -387,9 +387,9 @@ export fn BigDecimal @hash() -> u64 {
 #stable(since = "0.1")
 export fn BigDecimal @plus(other BigDecimal) -> BigDecimal {
     ro scale = if @scale > other.scale { @scale } else { other.scale }
-    ro a_mant = @mant.times(pow10(scale - @scale))
-    ro b_mant = other.mant.times(pow10(scale - other.scale))
-    BigDecimal.new(a_mant.plus(b_mant), scale)
+    ro a_mant = @mant * pow10(scale - @scale)
+    ro b_mant = other.mant * pow10(scale - other.scale)
+    BigDecimal.new(a_mant + b_mant, scale)
 }
 
 /// `a - b`. Оператор `-`.
@@ -407,7 +407,7 @@ export fn BigDecimal @abs() -> BigDecimal => BigDecimal.new(@mant.abs(), @scale)
 /// `a * b`. Оператор `*`.
 #stable(since = "0.1")
 export fn BigDecimal @times(other BigDecimal) -> BigDecimal =>
-    BigDecimal.new(@mant.times(other.mant), @scale + other.scale)
+    BigDecimal.new(@mant * other.mant, @scale + other.scale)
 
 /// `a / b` с явным `MathContext` (точность + округление). Оператор `/` НЕ
 /// десугарится — деление BigDecimal неоднозначно без явной точности.
@@ -426,7 +426,7 @@ fn BigDecimal @div(other BigDecimal, mc MathContext) -> BigDecimal
     ro db = b_abs.digits()
     ro k_raw = p + 2 - da + db
     ro k = if k_raw > 0 { k_raw } else { 0 }
-    ro expanded = a_abs.times(pow10(k))
+    ro expanded = a_abs * pow10(k)
     ro (quot, rem) = expanded.div_rem(b_abs) ?? panic("@div: b_abs != 0 гарантирован requires !other.mant.is_zero()")
     ro sticky = !rem.is_zero()
     ro (rounded, d) = round_to_precision(quot, p, mc.rm, sign, sticky)
@@ -457,7 +457,7 @@ export fn BigDecimal @round(ctx MathContext) -> BigDecimal {
 export fn BigDecimal @rescale(target int, rm RoundingMode) -> BigDecimal {
     if target >= @scale {
         ro pad = target - @scale
-        BigDecimal.new(@mant.times(pow10(pad)), target)
+        BigDecimal.new(@mant * pow10(pad), target)
     } else {
         ro drop = @scale - target
         ro sign = sign_num(@mant)
