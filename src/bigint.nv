@@ -175,16 +175,16 @@ fn add_shifted(a []u32, b []u32, shift int) -> []u32 {
     result
 }
 
-const KARATSUBA_THRESHOLD int = 16
+const KARATSUBA_THRESHOLD = 16
 
 fn karatsuba_mul(a []u32, b []u32) -> []u32 {
     ro n = if a.len() > b.len() { a.len() } else { b.len() }
     if n < KARATSUBA_THRESHOLD { return school_mul(a, b) }
     ro m = n / 2
-    ro a_lo = a[0..if m < a.len() { m } else { a.len() }]
-    ro a_hi = if m < a.len() { a[m..a.len()] } else { []u32.new() }
-    ro b_lo = b[0..if m < b.len() { m } else { b.len() }]
-    ro b_hi = if m < b.len() { b[m..b.len()] } else { []u32.new() }
+    ro a_lo = a[..m.min(a.len())]
+    ro a_hi = if m < a.len() { a[m..] } else { []u32.new() }
+    ro b_lo = b[..m.min(b.len())]
+    ro b_hi = if m < b.len() { b[m..] } else { []u32.new() }
     ro z0 = karatsuba_mul(a_lo, b_lo)
     ro z2 = karatsuba_mul(a_hi, b_hi)
     ro a_sum = limb_add(a_lo, a_hi)
@@ -585,7 +585,7 @@ export fn BigInt @to_str() -> str {
     consume sb = StringBuilder.new()
     match @sign { Neg => { sb.append("-") }; _ => {} }
     sb.append(digits)
-    sb.into_str()
+    sb   // голое значение коэрсится в str (#coerce finalize, D429 R9) — явный into_str избыточен
 }
 
 // ──────────────────────────────────────────────────────────────────────────
