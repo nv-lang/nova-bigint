@@ -355,6 +355,12 @@ export fn BigInt @is_neg() -> bool {
     match @sign { Neg => true; _ => false }
 }
 
+/// Whether the value is positive.
+#stable(since = "0.1")
+export fn BigInt @is_pos() -> bool {
+    match @sign { Pos => true; _ => false }
+}
+
 /// Значение равно единице.
 #stable(since = "0.1")
 export fn BigInt @is_one() -> bool {
@@ -691,6 +697,63 @@ export fn BigInt @digits() -> int {
     if @is_zero() { return 1 }
     ro s = @to_str()
     if @is_neg() { s.byte_len() - 1 } else { s.byte_len() }
+}
+
+/// Number of significant bits of the absolute value (0 for zero).
+/// V1: O(n) over limbs.
+#stable(since = "0.1")
+export fn BigInt @bit_length() -> int {
+    if @is_zero() { return 0 }
+    ro last = @limbs[@limbs.len() - 1] as u64
+    ro bit_len = (@limbs.len() - 1) * 32
+    mut v = last
+    mut n = 0
+    while v > 0 { v = v / 2; n += 1 }
+    bit_len + n
+}
+
+/// Unsigned shift LEFT (multiplication by 2^{bits}). Sign is preserved.
+#stable(since = "0.1")
+export fn BigInt @shl(bits int) -> BigInt {
+    if bits == 0 || @is_zero() { return @ }
+    ro words = bits / 32
+    ro shift = bits % 32
+    mut result = []u32.new()
+    for _ in 0..words { result.push(0 as u32) }
+    mut carry = 0 as u64
+    for i in 0..@limbs.len() {
+        ro v = (@limbs[i] as u64) << shift | carry
+        result.push(v as u32)
+        carry = v >> 32
+    }
+    if carry != 0 { result.push(carry as u32) }
+    { @sign, limbs: result }
+}
+
+/// Unsigned shift RIGHT (trunc-toward-zero division by 2^{bits}). Sign is preserved.
+/// For sign-magnitude BigInt, shifting the magnitude equals truncation.
+#stable(since = "0.1")
+export fn BigInt @shr(bits int) -> BigInt {
+    if bits == 0 { return @ }
+    if @is_zero() { return BigInt.zero() }
+    ro words = bits / 32
+    ro shift = bits % 32
+    if words >= @limbs.len() { return BigInt.zero() }
+    ro new_len = @limbs.len() - words
+    mut result = []u32.new()
+    if shift == 0 {
+        for i in 0..new_len { result.push(@limbs[words + i]) }
+    } else {
+        ro inv = 32 - shift
+        for i in 0..new_len {
+            ro lo = @limbs[words + i] >> shift
+            ro hi = if i + words + 1 < @limbs.len() { @limbs[words + i + 1] << inv } else { 0 as u32 }
+            result.push(lo | hi)
+        }
+    }
+    normalize(result)
+    if result.len() == 0 { return BigInt.zero() }
+    { @sign, limbs: result }
 }
 
 /// Чётное ли число (младший бит).
