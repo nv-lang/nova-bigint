@@ -1,0 +1,613 @@
+// Тесты bigfloat — двоичное произвольной точности поверх BigInt.
+// План 237 (docs/plans/237-bigfloat.md в репе nova).
+
+module bigint.bigfloat_test
+
+import bigint.{BigInt}
+import bigint.bigfloat.{BigFloat, PrecisionContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, ParseBigFloatError, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+
+fn bf(m int, e int) -> BigFloat => BigFloat.new(m.to_bigint(), e)
+
+fn ctx(prec int, rm RoundingMode) -> PrecisionContext => PrecisionContext.new(prec, rm)
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии: примитивы → BigFloat
+// ──────────────────────────────────────────────────────────────────────────
+
+test "int @to_bigfloat(53): 42" {
+    ro x = (42).to_bigfloat(ctx(53, HalfEven))
+    assert(x.mant.equal((42).to_bigint()))
+    assert(x.exp == 0)
+}
+
+test "BigFloat.zero() / one()" {
+    assert(BigFloat.zero().is_zero())
+    assert(BigFloat.zero().exp == 0)
+    ro o = BigFloat.one()
+    assert(o.mant.is_one())
+    assert(o.exp == 0)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Normalize
+// ──────────────────────────────────────────────────────────────────────────
+
+test "normalize: 6 -> mant=3, exp=1" {
+    ro a = bf(6, 0)
+    ro n = a.normalize()
+    assert(n.mant.equal((3).to_bigint()))
+    assert(n.exp == 1)
+}
+
+test "normalize: 0 -> mant=0, exp=0" {
+    ro n = BigFloat.zero().normalize()
+    assert(n.is_zero())
+    assert(n.exp == 0)
+}
+
+test "normalize: 1 -> idempotent" {
+    ro n = bf(1, 0).normalize()
+    assert(n.mant.equal((1).to_bigint()))
+    assert(n.exp == 0)
+}
+
+test "normalize: 48 (=0b110000) -> mant=3, exp=4" {
+    ro a = bf(48, 0)
+    ro n = a.normalize()
+    assert(n.mant.equal((3).to_bigint()))
+    assert(n.exp == 4)
+}
+
+test "normalize: идемпотентно" {
+    ro a = bf(100, 0)
+    ro n1 = a.normalize()
+    ro n2 = n1.normalize()
+    assert(n1.equal(n2))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// f64 → BigFloat
+// ──────────────────────────────────────────────────────────────────────────
+
+test "f64 to_bigfloat: 0.0 -> zero" {
+    ro x = (0.0).to_bigfloat()
+    assert(x.is_zero())
+}
+
+test "f64 to_bigfloat: 1.0" {
+    ro x = (1.0).to_bigfloat()
+    ro n = x.normalize()
+    assert(n.mant.equal(BigInt.one()))
+    assert(n.exp == 0)
+}
+
+test "f64 to_bigfloat: -2.5" {
+    ro x = (-2.5).to_bigfloat()
+    assert(x.mant.is_neg())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// str → BigFloat (десятичные)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "str to_bigfloat: \"123\" scale=0" {
+    ro x = "123".to_bigfloat(ctx(53, HalfEven))!!
+    assert(x.exp == 0)
+    assert(x.mant.equal((123).to_bigint()))
+}
+
+test "str to_bigfloat: \"12.345\" @ prec=24" {
+    ro x = "12.345".to_bigfloat(ctx(24, HalfEven))!!
+    assert(!x.is_zero())
+}
+
+test "str to_bigfloat: \"0.0\"" {
+    ro x = "0.0".to_bigfloat(ctx(53, HalfEven))!!
+    assert(x.is_zero())
+}
+
+test "str to_bigfloat: пустая строка -> Empty" {
+    match "".to_bigfloat(ctx(53, HalfEven)) {
+        Err(Empty) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "str to_bigfloat: \"-\" -> OnlySign" {
+    match "-".to_bigfloat(ctx(53, HalfEven)) {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// str → BigFloat (двоичные)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "str to_bigfloat binary: 0b101.01p0 = 5.25" {
+    ro x = "0b101.01p0".to_bigfloat(ctx(53, HalfEven))!!
+    // 0b101.01 = 5.25
+    // mant=0b10101=21, exp=-2 → 21 * 2^{-2} = 5.25
+    assert(x.mant.equal((21).to_bigint()))
+    assert(x.exp == -2)
+}
+
+test "str to_bigfloat binary: 0b1p1 = 2.0" {
+    ro x = "0b1p1".to_bigfloat(ctx(53, HalfEven))!!
+    assert(x.mant.equal(BigInt.one()))
+    assert(x.exp == 1)
+}
+
+test "str to_bigfloat binary: -0b1.1p-1 = -0.75" {
+    ro x = "-0b1.1p-1".to_bigfloat(ctx(53, HalfEven))!!
+    // -0b1.1 = -1.5 * 2^{-1} = -0.75
+    // mant=-0b11=-3, exp=-2
+    assert(x.mant.equal((-3).to_bigint()))
+    assert(x.exp == -2)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение / равенство
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@equal: одинаковые значения" {
+    ro a = bf(6, 0).normalize()   // 6 → {3, 1}
+    ro b = bf(3, 1)               // 3 × 2^1 = 6
+    assert(a.equal(b))
+}
+
+test "@equal: 1.5 != 2.0" {
+    ro a = bf(3, -1)   // 1.5
+    ro b = bf(2, 0)    // 2
+    assert(!a.equal(b))
+}
+
+test "@equal: zero == zero независимо от представления" {
+    assert(BigFloat.zero().equal(BigFloat.new(BigInt.zero(), 100)))
+    assert(BigFloat.zero().equal(BigFloat.new(BigInt.zero(), -50)))
+}
+
+test "@compare: знаки" {
+    assert(bf(-5, 0).compare(bf(3, 0)) < 0)
+    assert(bf(3, 0).compare(bf(-5, 0)) > 0)
+    assert(BigFloat.zero().compare(BigFloat.zero()) == 0)
+}
+
+test "@compare: msb-fast-path, разная позиция старшего бита" {
+    // 1×2^100 (msb=101) vs 3×2^60 (msb=62): 2^100 > 3*2^60
+    ro big = BigFloat.new(BigInt.one(), 100)
+    ro small = bf(3, 60)
+    assert(big.compare(small) > 0)
+    assert(small.compare(big) < 0)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика: +, -
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@plus: 1 + 2 = 3" {
+    ro a = BigFloat.one()
+    ro b = bf(2, 0)
+    ro c = a.plus(b, ctx(53, HalfEven))
+    ro n = c.normalize()
+    assert(n.mant.equal((3).to_bigint()))
+    assert(n.exp == 0)   // 3 = 0b11 — мантисса нечётная, normalize останавливается на {3, 0}
+}
+
+test "@plus: 1 + (-1) = 0" {
+    ro a = BigFloat.one()
+    ro b = bf(-1, 0)
+    ro c = a.plus(b, ctx(53, HalfEven))
+    assert(c.is_zero())
+}
+
+test "@plus: большое + маленькое (разность порядков)" {
+    ro big = BigFloat.new((1000).to_bigint(), 0)
+    ro small = BigFloat.new((1).to_bigint(), -10)  // 1/1024
+    ro c = big.plus(small, ctx(53, HalfEven))
+    assert(c.mant.is_pos())
+}
+
+test "@minus: 5 - 3 = 2" {
+    ro a = bf(5, 0)
+    ro b = bf(3, 0)
+    ro c = a.minus(b, ctx(53, HalfEven))
+    assert(c.equal(bf(2, 0)))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Умножение
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@times: 3 * 4 = 12" {
+    ro a = bf(3, 0)
+    ro b = bf(4, 0)
+    ro c = a.times(b, ctx(53, HalfEven))
+    assert(c.equal(bf(12, 0)))
+}
+
+test "@times: -2 * 3 = -6" {
+    ro a = bf(-2, 0)
+    ro b = bf(3, 0)
+    ro c = a.times(b, ctx(53, HalfEven))
+    assert(c.mant.is_neg())
+    assert(c.mant.abs().equal((6).to_bigint()))
+}
+
+test "@times: 0 * anything = 0" {
+    ro a = BigFloat.zero()
+    ro b = bf(42, 0)
+    ro c = a.times(b, ctx(53, HalfEven))
+    assert(c.is_zero())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Neg / Abs
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@neg / @abs" {
+    ro a = bf(-3, 0)
+    assert(a.neg().equal(bf(3, 0)))
+    assert(a.abs().equal(bf(3, 0)))
+    assert(bf(3, 0).neg().equal(bf(-3, 0)))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Деление
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@div: 1/2 = 0.5" {
+    ro a = BigFloat.one()
+    ro b = bf(2, 0)
+    ro c = a.div(b, ctx(53, HalfEven))
+    assert(c.equal(bf(1, -1)))
+}
+
+test "@div: 1/3 @ prec=24 HalfEven" {
+    ro a = BigFloat.one()
+    ro b = bf(3, 0)
+    ro c = a.div(b, ctx(24, HalfEven))
+    assert(!c.is_zero())
+}
+
+test "@div: 1/3 @ prec=2 — все 7 режимов (граница)" {
+    ro a = BigFloat.one()
+    ro b = bf(3, 0)
+    // 1/3 = 0.010101... в двоичной; prec=2 → {0.25, 0.375}
+    // quot=21(0b10101), b=3, rem=5>half=4, sticky=true
+    ro half = bf(3, -3)      // 0.375 (round up)
+    ro quarter = bf(1, -2)   // 0.25  (trunc)
+    assert(a.div(b, ctx(2, HalfEven)).equal(half))
+    assert(a.div(b, ctx(2, HalfUp)).equal(half))
+    assert(a.div(b, ctx(2, HalfDown)).equal(half))
+    assert(a.div(b, ctx(2, Down)).equal(quarter))
+    assert(a.div(b, ctx(2, Up)).equal(half))
+    assert(a.div(b, ctx(2, Ceiling)).equal(half))
+    assert(a.div(b, ctx(2, Floor)).equal(quarter))
+}
+
+test "@div: деление на ноль паникует" panics "requires failed" {
+    ro a = BigFloat.one()
+    ro _ = a.div(BigFloat.zero(), ctx(53, HalfEven))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// @to_bigint (truncation)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@to_bigint: 7.75 -> 7 (trunc) — положительное" {
+    // 7.75 = 31 × 2^{-2}
+    ro x = bf(31, -2)
+    assert(x.to_bigint().equal((7).to_bigint()))
+}
+
+test "@to_bigint: -7.75 -> -7 (trunc к нулю)" {
+    ro x = bf(-31, -2)
+    assert(x.to_bigint().equal((-7).to_bigint()))
+}
+
+test "@to_bigint: 8.0 -> 8" {
+    ro x = bf(8, 0)
+    assert(x.to_bigint().equal((8).to_bigint()))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// @is_integer
+// ──────────────────────────────────────────────────────────────────────────
+
+test "is_integer: 8 -> true" {
+    assert(bf(8, 0).is_integer())
+}
+
+test "is_integer: 7.75 -> false" {
+    assert(!bf(31, -2).is_integer())
+}
+
+test "is_integer: 0 -> true" {
+    assert(BigFloat.zero().is_integer())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// @round
+// ──────────────────────────────────────────────────────────────────────────
+
+test "@round: prec=3 HalfEven, 1234 -> 1024" {
+    // 1234 = 0b10011010010, bit_length=11
+    // prec=3 → отбросить 8 бит → round_to_precision
+    ro x = bf(1234, 0)
+    ro r = x.round(3, HalfEven)
+    ro n = r.normalize()
+    // После normalize mant нечётна
+    assert(!n.mant.is_zero())
+}
+
+test "@round: идемпотентно" {
+    ro x = bf(12345, 0)
+    ro r1 = x.round(6, HalfEven)
+    ro r2 = r1.round(6, HalfEven)
+    assert(r1.equal(r2))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// to_str (через BigDecimal)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "to_str: 123 -> \"123.000000\"" {
+    ro x = bf(123, 0)
+    ro s = x.to_str(6)
+    assert(s == "123.000000")
+}
+
+test "to_str: -5 -> \"-5.000000\"" {
+    ro x = bf(-5, 0)
+    ro s = x.to_str(6)
+    assert(s == "-5.000000")
+}
+
+test "to_str: 0 -> \"0.000000\"" {
+    ro s = BigFloat.zero().to_str(6)
+    assert(s == "0.000000")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Property-тесты — PRNG с фиксированным сидом (как bigdecimal_test)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn splitmix64_step(seed u64) -> u64 {
+    mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    z ^ (z >> 31)
+}
+
+fn rand_range(state u64, lo int, hi int) -> int {
+    ro span = (hi - lo + 1) as u64
+    lo + (state % span) as int
+}
+
+fn rand_bool(state u64) -> bool => (state & 1) == 1
+
+test "property: a+b == b+a (коммутативность), seed=7, N=200" {
+    mut state = splitmix64_step(7)
+    for _ in 0..200 {
+        ro av = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro bv = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro ae = rand_range(state, -5, 5); state = splitmix64_step(state)
+        ro be = rand_range(state, -5, 5); state = splitmix64_step(state)
+        ro a = BigFloat.new(av.to_bigint(), ae)
+        ro b = BigFloat.new(bv.to_bigint(), be)
+        ro ab = a.plus(b, ctx(53, HalfEven))
+        ro ba = b.plus(a, ctx(53, HalfEven))
+        assert(ab.equal(ba))
+    }
+}
+
+test "property: a*b == b*a, seed=13, N=200" {
+    mut state = splitmix64_step(13)
+    for _ in 0..200 {
+        ro av = rand_range(state, -100, 100); state = splitmix64_step(state)
+        ro bv = rand_range(state, -100, 100); state = splitmix64_step(state)
+        ro ae = rand_range(state, -3, 3); state = splitmix64_step(state)
+        ro be = rand_range(state, -3, 3); state = splitmix64_step(state)
+        ro a = BigFloat.new(av.to_bigint(), ae)
+        ro b = BigFloat.new(bv.to_bigint(), be)
+        ro ab = a.times(b, ctx(53, HalfEven))
+        ro ba = b.times(a, ctx(53, HalfEven))
+        assert(ab.equal(ba))
+    }
+}
+
+test "property: round(round(x)) == round(x) — идемпотентность, seed=21, N=100" {
+    mut state = splitmix64_step(21)
+    for _ in 0..100 {
+        ro av = rand_range(state, -1000000, 1000000); state = splitmix64_step(state)
+        ro ae = rand_range(state, 0, 5); state = splitmix64_step(state)
+        ro a = BigFloat.new(av.to_bigint(), ae)
+        ro r1 = a.round(6, HalfEven)
+        ro r2 = r1.round(6, HalfEven)
+        assert(r2.equal(r1))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// @sqrt — Ньютон (Ф.4 плана 237)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "sqrt: sqrt(0) == 0" {
+    ro x = BigFloat.zero().sqrt(ctx(53, HalfEven))
+    assert(x.is_zero())
+}
+
+test "sqrt: sqrt(1) == 1" {
+    ro x = BigFloat.one().sqrt(ctx(53, HalfEven))
+    assert(x.equal(BigFloat.one()))
+}
+
+test "sqrt: sqrt(4) == 2" {
+    ro x = bf(4, 0).sqrt(ctx(53, HalfEven))
+    assert(x.equal(bf(2, 0)))
+}
+
+test "sqrt: sqrt(9) == 3" {
+    ro x = bf(9, 0).sqrt(ctx(53, HalfEven))
+    assert(x.equal(bf(3, 0)))
+}
+
+test "sqrt: sqrt(2) ≈ 1.41421356 @ prec=24" {
+    ro s = bf(2, 0).sqrt(ctx(24, HalfEven))
+    ro back = s.times(s, ctx(24, HalfEven))
+    ro sq = back.to_f64()
+    match sq {
+        Some(v) => assert((v - 2.0).abs() < 0.001)
+        None => assert(false)
+    }
+}
+
+test "sqrt: sqrt(2^200) == 2^100 (большой экспонент)" {
+    ro x = BigFloat.new(BigInt.one(), 200).sqrt(ctx(53, HalfEven))
+    assert(x.equal(BigFloat.new(BigInt.one(), 100)))
+}
+
+test "sqrt: sqrt(0.25) == 0.5" {
+    ro x = bf(1, -2).sqrt(ctx(53, HalfEven))
+    assert(x.equal(bf(1, -1)))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round-trip: f64, строки, BigDecimal ↔ BigFloat (Ф.5 плана 237)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "f64 round-trip: x.to_bigfloat().to_f64() == Some(x)" {
+    ro cases = [0.5, 1.0, 2.5, -3.75, 100.0, 0.1, 3.14159]
+    for v in cases {
+        ro x = v.to_bigfloat()
+        ro back = x.to_f64()
+        match back {
+            Some(w) => assert(w == v)
+            None => assert(false)
+        }
+    }
+}
+
+test "to_f64: большой экспонент — 2^100 в f64 и обратно" {
+    ro x = BigFloat.new(BigInt.one(), 100)
+    ro back = x.to_f64()
+    match back {
+        Some(v) => assert(v.to_bigfloat().equal(x))
+        None => assert(false)
+    }
+}
+
+test "to_f64: overflow → None (2^1024)" {
+    ro x = BigFloat.new(BigInt.one(), 1024)
+    assert(x.to_f64() == None)
+}
+
+test "to_f64: subnormal-минимум (f64.MIN_POSITIVE) в f64 и обратно" {
+    ro x = f64.MIN_POSITIVE.to_bigfloat()
+    ro back = x.to_f64()
+    match back {
+        Some(v) => assert(v.to_bigfloat().equal(x))
+        None => assert(false)
+    }
+}
+
+test "to_f64: subnormal tie-to-even 3*2^-1075 -> bits=2 (1.5 ulp, up)" {
+    ro x = BigFloat.new((3).to_bigint(), -1075)
+    match x.to_f64() {
+        Some(v) => assert(v.to_bits() == 2)
+        None => assert(false)
+    }
+}
+
+test "to_f64: subnormal tie-to-even 5*2^-1075 -> bits=2 (2.5 ulp, down)" {
+    ro x = BigFloat.new((5).to_bigint(), -1075)
+    match x.to_f64() {
+        Some(v) => assert(v.to_bits() == 2)
+        None => assert(false)
+    }
+}
+
+test "to_f64: subnormal range f64 round-trips are exact" {
+    ro cases = [1e-310, 2.5e-320, 4.5e-323, 2.225073858507201e-308]
+    for v in cases {
+        ro x = v.to_bigfloat()
+        match x.to_f64() {
+            Some(w) => assert(w.to_bigfloat().equal(x))
+            None => assert(false)
+        }
+    }
+}
+
+test "to_f64: double-rounding boundary (2^54-5)*2^-1077 -> M = 2^51 - 1" {
+    ro x = BigFloat.new(BigInt.one().shl(54).minus((5).to_bigint()), -1077)
+    match x.to_f64() {
+        Some(v) => assert(v.to_bits() == 2251799813685247)
+        None => assert(false)
+    }
+}
+
+test "to_f64: underflow -> None (2^-1075)" {
+    ro x = BigFloat.new(BigInt.one(), -1075)
+    assert(x.to_f64() == None)
+}
+
+test "to_f64: max f64 round-trip (2^53-1)*2^971" {
+    ro x = BigFloat.new(BigInt.one().shl(53).minus(BigInt.one()), 971)
+    match x.to_f64() {
+        Some(v) => assert(v.to_bigfloat().equal(x))
+        None => assert(false)
+    }
+}
+
+test "to_f64: overflow -> None ((2^54-1)*2^971)" {
+    ro x = BigFloat.new(BigInt.one().shl(54).minus(BigInt.one()), 971)
+    assert(x.to_f64() == None)
+}
+
+test "to_str round-trip: x.to_str(6).to_bigfloat(ctx).to_str(6) == x.to_str(6)" {
+    ro c = ctx(53, HalfEven)
+    ro cases = [0.5, 1.5, 2.75, 100.0, 0.1, 3.14159]
+    for v in cases {
+        ro x = v.to_bigfloat()
+        ro s = x.to_str(6)
+        ro y = s.to_bigfloat(c)!!
+        assert(y.to_str(6) == s)
+    }
+}
+
+test "str round-trip: пи с 20 цифрами @ prec=128 — to_str(20) идемпотентно" {
+    ro c = ctx(128, HalfEven)
+    ro s = "3.14159265358979323846"
+    ro x = s.to_bigfloat(c)!!
+    ro back = x.to_str(20)
+    ro y = back.to_bigfloat(c)!!
+    assert(y.to_str(20) == back)
+}
+
+test "BigDecimal → BigFloat: scale=0 — точное целое" {
+    ro c = ctx(24, HalfEven)
+    ro bd = "12345".to_bigdecimal()!!
+    ro bf = bd.to_bigfloat(c)
+    assert(bf.equal(BigFloat.new((12345).to_bigint(), 0)))
+}
+
+test "BigDecimal ↔ BigFloat round-trip: 12.345 восстанавливается при prec=53" {
+    ro c = ctx(53, HalfEven)
+    ro bd = "12.345".to_bigdecimal()!!
+    ro bf = bd.to_bigfloat(c)
+    ro back = bf.to_bigdecimal()
+    assert(back.rescale(3, HalfEven).equal(bd))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Panic-тесты: контракты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "PrecisionContext.new(1, ...) паникует — prec >= 2" panics "requires failed" {
+    ro _ = PrecisionContext.new(1, HalfEven)
+}
+
+test "PrecisionContext.new(0, ...) паникует — prec >= 2" panics "requires failed" {
+    ro _ = PrecisionContext.new(0, HalfEven)
+}

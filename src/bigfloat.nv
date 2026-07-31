@@ -1,0 +1,708 @@
+// Двоичное число произвольной точности: mant × 2^{exp}.
+// Поверх BigInt (bigint.nv, план 235). План: docs/plans/237-bigfloat.md
+// в репе nova. Вся арифметика — BigInt-свёртки с постраундом.
+//
+// Value-record: копия = BigInt-мантисса (heap-указатель) + exp (8 байт).
+// Нормализация LAZY — не вызывается в конструкторах/операциях, только
+// в @equal/@hash и явном normalize().
+
+module bigint.bigfloat
+
+import bigint.{BigInt, Sign, Neg, Zero, Pos}
+import bigint.bigdecimal.{RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, BigDecimal}
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.checksums.fnv.{Fnv}
+
+// Guard bits для однократного правильного округления (Steele & White 1990).
+const GUARD int = 3
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Error parsing a string (decimal or binary) into a BigFloat.
+#stable(since = "0.1")
+export type ParseBigFloatError enum
+    | Empty
+    | OnlySign
+    | InvalidCharacter
+    | MultiplePoints
+    | MultipleExponents
+    | EmptyExponent
+    | EmptyMantissa
+
+/// Context: precision (SIGNIFICANT BITS of the mantissa, ≥ 2) + rounding mode.
+/// Analogous to the BigDecimal MathContext, but prec is in bits, not decimal digits.
+/// Invariant prec ≥ 2 (otherwise any rounding collapses to 0 or ±∞ by sign).
+#stable(since = "0.1")
+export type PrecisionContext value {
+    prec int
+    rm RoundingMode
+}
+
+/// Build a PrecisionContext. Panics when prec < 2.
+#stable(since = "0.1")
+export fn PrecisionContext.new(prec int, rm RoundingMode) -> PrecisionContext
+    requires prec >= 2
+{
+    { prec, rm }
+}
+
+/// Arbitrary-precision binary number: value = mant × 2^{exp}.
+/// The mantissa is an INTEGER (fixed-point, radix point at the right), exp may be < 0.
+#stable(since = "0.1")
+export type BigFloat value {
+    mant BigInt
+    exp int
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Приватные хелперы
+// ──────────────────────────────────────────────────────────────────────────
+
+fn sign_num(b BigInt) -> int {
+    if b.is_zero() { 0 } else if b.is_neg() { -1 } else { 1 }
+}
+
+fn apply_sign(m BigInt, s Sign) -> BigInt {
+    match s {
+        Zero => BigInt.zero()
+        Neg => m.neg()
+        Pos => m
+    }
+}
+
+/// Binary rounding: drop EXACTLY `b` least significant BITS of the non-negative
+/// mantissa `mant_abs` (b ≤ 0 → no-op). `sticky` is true when the discarded tail
+/// contains non-zero bits. Returns (rounded, bits_lost).
+fn round_to_precision(mant_abs BigInt, prec int, rm RoundingMode, sign Sign, sticky bool) -> (BigInt, int) {
+    ro b = mant_abs.bit_length() - prec
+    if b <= 0 { return (mant_abs, 0) }
+    ro factor = BigInt.one().shl(b)
+    ro (quot, rem) = mant_abs.div_rem(factor) ?? panic("round_to_precision: factor=2^b, b>0, factor != 0")
+    ro half = BigInt.one().shl(b - 1)
+    ro cmp = rem.compare(half)
+    ro gt_half = cmp > 0 || (cmp == 0 && sticky)
+    ro eq_half = cmp == 0 && !sticky
+    ro tail = !rem.is_zero() || sticky
+    ro carry = match rm {
+        HalfEven => gt_half || (eq_half && !quot.is_even())
+        HalfUp   => gt_half || eq_half
+        HalfDown => gt_half
+        Down     => false
+        Up       => tail
+        Ceiling  => sign == Pos && tail
+        Floor    => sign == Neg && tail
+    }
+    ro rounded = if carry { quot + BigInt.one() } else { quot }
+    ro rbl = rounded.bit_length()
+    if rbl > prec {
+        ro rounded_shifted = rounded.shr(1)
+        (rounded_shifted, b + 1)
+    } else {
+        (rounded, b)
+    }
+}
+
+/// 5^k as a BigInt.
+fn pow5(k int) -> BigInt => (5).to_bigint().pow(k as uint)
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zero (canonical form: mant=0, exp=0).
+#stable(since = "0.1")
+export fn BigFloat.zero() -> BigFloat => { mant: BigInt.zero(), exp: 0 }
+
+/// One.
+#stable(since = "0.1")
+export fn BigFloat.one() -> BigFloat => { mant: BigInt.one(), exp: 0 }
+
+/// Build a BigFloat directly (no normalization).
+#stable(since = "0.1")
+export fn BigFloat.new(mant BigInt, exp int) -> BigFloat => { mant, exp }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Нормализация (§2.1) — lazy: удалить конечные нулевые БИТЫ мантиссы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Remove the trailing zero bits of the mantissa (increasing exp). Result:
+/// mant is odd OR zero. Normalization is O(n × #trailing_zeros) via BigInt
+/// division by 2 (each O(n)); one division per step.
+#stable(since = "0.1")
+export fn BigFloat @normalize() -> BigFloat {
+    if @mant.is_zero() { return BigFloat.zero() }
+    mut mant = @mant
+    mut exp = @exp
+    while !mant.is_zero() && mant.is_even() {
+        // Деление на 2 — BigInt сдвиг вправо
+        mant = mant.shr(1)
+        exp = exp + 1
+    }
+    { mant, exp }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Sign of the value.
+#stable(since = "0.1")
+export fn BigFloat @sign() -> Sign {
+    if @mant.is_zero() { Zero } else if @mant.is_neg() { Neg } else { Pos }
+}
+
+/// Whether the value is zero.
+#stable(since = "0.1")
+export fn BigFloat @is_zero() -> bool => @mant.is_zero()
+
+/// Whether the value is positive.
+#stable(since = "0.1")
+export fn BigFloat @is_pos() -> bool => @mant.is_pos()
+
+/// Whether the value is negative.
+#stable(since = "0.1")
+export fn BigFloat @is_neg() -> bool => @mant.is_neg()
+
+/// Whether the value is an integer (mant × 2^{exp} has no fractional part).
+/// V1: normalizes and checks exp >= 0.
+#stable(since = "0.1")
+export fn BigFloat @is_integer() -> bool {
+    if @mant.is_zero() { return true }
+    ro n = @normalize()
+    n.exp >= 0 || n.mant.is_zero()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии: примитивы → BigFloat (Ints → BigFloat + i128)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `i8` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn i8 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `i16` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn i16 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `i32` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn i32 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `i64` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn i64 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `int` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn int @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `u8` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn u8 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `u16` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn u16 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `u32` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn u32 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `u64` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn u64 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+/// `uint` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn uint @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+
+/// `i128` → `BigFloat` with a precision context.
+#stable(since = "0.1")
+export fn i128 @to_bigfloat(ctx PrecisionContext) -> BigFloat => BigFloat.new(@to_bigint(), 0)
+
+// ──────────────────────────────────────────────────────────────────────────
+// f64 → BigFloat (точное представление IEEE 754 binary64)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `f64` → `BigFloat`. Exact representation: unpacks IEEE 754 binary64:
+/// normalized → mant_bf = 2^52 + mant_bits, exp_bf = exp_biased - 1023 - 52;
+/// subnormal → mant_bf = mant_bits, exp_bf = -1022 - 52;
+/// ±0 → BigFloat.zero(); ±Inf/NaN → panic (V1 has no Inf/NaN).
+#stable(since = "0.1")
+export fn f64 @to_bigfloat() -> BigFloat {
+    ro bits = @to_bits()
+    ro sign = if (bits >> 63) != 0 { Neg } else { Pos }
+    ro exp_biased = ((bits >> 52) & 0x7FF) as int
+    ro mant_bits = bits & 0x000FFFFFFFFFFFFF
+    if exp_biased == 0x7FF {
+        panic("f64 to_bigfloat: Inf/NaN не представимы (D423)")
+    }
+    if exp_biased == 0 {
+        // Subnormal или ±0
+        if mant_bits == 0 { return BigFloat.zero() }
+        // Subnormal: mant_bf = mant_bits, exp_bf = -1022 - 52
+        ro mant_bf = mant_bits.to_bigint()
+        ro bf = BigFloat.new(mant_bf, -1022 - 52)
+        if sign == Neg { BigFloat.new(bf.mant.neg(), bf.exp) } else { bf }
+    } else {
+        // Normalized: mant_bf = 2^52 + mant_bits, exp_bf = exp_biased - 1023 - 52
+        ro mant_hi = (1 as u64) << 52
+        ro full_mant = mant_hi | mant_bits
+        ro mant_bf = full_mant.to_bigint()
+        ro bf = BigFloat.new(mant_bf, exp_biased - 1023 - 52)
+        if sign == Neg { BigFloat.new(bf.mant.neg(), bf.exp) } else { bf }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// str → BigFloat (десятичная или двоичная строка)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Parse a decimal or binary string into a BigFloat.
+/// Decimal format: `[sign] (int-part ['.' [frac-part]] | '.' frac-part) [exp-part]`.
+/// Binary format:  `[sign] '0b' bin-digits ['.' bin-frac] 'p' [sign] digits`.
+/// No `bf` suffix — the binary format is detected by the `0b` prefix.
+#stable(since = "0.1")
+export fn str @to_bigfloat(ctx PrecisionContext) -> Result[BigFloat, ParseBigFloatError] {
+    ro len = @byte_len()
+    if len == 0 { return Err(Empty) }
+    ro bytes = @bytes()
+    mut i = 0
+    if bytes[0] == ('+' as u8) { i = 1 }
+    else if bytes[0] == ('-' as u8) { i = 1 }
+    if i >= len { return Err(OnlySign) }
+    // Двоичный? Префикс '0b' после опционального знака.
+    if i < len && bytes[i] == ('0' as u8) && i + 1 < len && bytes[i + 1] == ('b' as u8) {
+        return parse_binary_str(@, ctx)
+    }
+    // Десятичный: парсим как BigDecimal, затем конвертируем в BigFloat.
+    ro bd_res = @to_bigdecimal()
+    match bd_res {
+        Ok(bd) => Ok(bd.to_bigfloat(ctx))
+        Err(e) => {
+            ro mapped = match e {
+                Empty => Empty
+                OnlySign => OnlySign
+                InvalidCharacter => InvalidCharacter
+                MultiplePoints => MultiplePoints
+                MultipleExponents => MultipleExponents
+                EmptyExponent => EmptyExponent
+                EmptyMantissa => EmptyMantissa
+            }
+            Err(mapped)
+        }
+    }
+}
+
+/// Parse a binary string `0b...p...`.
+fn parse_binary_str(s str, ctx PrecisionContext) -> Result[BigFloat, ParseBigFloatError] {
+    ro bytes = s.bytes()
+    ro len = s.byte_len()
+    mut i = 0
+    ro negative = if bytes[0] == ('-' as u8) { i = 1; true } else { if bytes[0] == ('+' as u8) { i = 1 }; false }
+    // Пропустить '0b'
+    if i >= len || bytes[i] != ('0' as u8) { return Err(InvalidCharacter) }
+    i += 1
+    if i >= len || bytes[i] != ('b' as u8) { return Err(InvalidCharacter) }
+    i += 1
+    if i >= len { return Err(EmptyMantissa) }
+    // int-part (binary digits)
+    mut int_bits = []u8.new()
+    while i < len && bytes[i] != ('.' as u8) && bytes[i] != ('p' as u8) && bytes[i] != ('P' as u8) {
+        ro b = bytes[i]
+        if b == ('_' as u8) { i += 1; continue }
+        if b < ('0' as u8) || b > ('1' as u8) { return Err(InvalidCharacter) }
+        int_bits.push(b)
+        i += 1
+    }
+    // frac-part (опциональная)
+    mut frac_bits = []u8.new()
+    if i < len && bytes[i] == ('.' as u8) {
+        i += 1
+        while i < len && bytes[i] != ('p' as u8) && bytes[i] != ('P' as u8) {
+            ro b = bytes[i]
+            if b == ('.' as u8) { return Err(MultiplePoints) }
+            if b == ('_' as u8) { i += 1; continue }
+            if b < ('0' as u8) || b > ('1' as u8) { return Err(InvalidCharacter) }
+            frac_bits.push(b)
+            i += 1
+        }
+    }
+    if int_bits.len() == 0 && frac_bits.len() == 0 { return Err(EmptyMantissa) }
+    // Экспонента 'p' (обязательна? План: `0b...p...` с p. Делаем опциональной для V1.)
+    mut exp = 0
+    if i < len && (bytes[i] == ('p' as u8) || bytes[i] == ('P' as u8)) {
+        i += 1
+        mut exp_neg = false
+        if i < len && bytes[i] == ('-' as u8) { exp_neg = true; i += 1 }
+        else if i < len && bytes[i] == ('+' as u8) { i += 1 }
+        mut exp_count = 0
+        mut ev = 0
+        while i < len {
+            ro b = bytes[i]
+            if b == ('_' as u8) { i += 1; continue }
+            if b < ('0' as u8) || b > ('9' as u8) { return Err(InvalidCharacter) }
+            ev = ev * 10 + ((b - ('0' as u8)) as int)
+            exp_count += 1
+            i += 1
+        }
+        if exp_count == 0 { return Err(EmptyExponent) }
+        exp = if exp_neg { -ev } else { ev }
+    }
+    // Построить мантиссу: собрать все биты
+    mut all_bits = int_bits.clone()
+    for j in 0..frac_bits.len() { all_bits.push(frac_bits[j]) }
+    if all_bits.len() == 0 { return Err(EmptyMantissa) }
+    ro frac_len = frac_bits.len() as int
+    // Убрать ведущие нули из all_bits
+    mut first_one = 0
+    while first_one < all_bits.len() && all_bits[first_one] == ('0' as u8) {
+        first_one += 1
+    }
+    if first_one == all_bits.len() { return Ok(BigFloat.zero()) }
+    ro sig_bits = all_bits[first_one..]
+    // Построить BigInt из битовой строки
+    mut mant = BigInt.zero()
+    for j in 0..sig_bits.len() {
+        mant = mant.shl(1)
+        if sig_bits[j] == ('1' as u8) {
+            mant = mant + BigInt.one()
+        }
+    }
+    ro exp_bf = -frac_len + exp - first_one  // откорректировать exp на лидирующие нули int-part
+    if negative { mant = mant.neg() }
+    Ok(BigFloat.new(mant, exp_bf))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BigFloat → str (через BigDecimal)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Decimal string (via BigDecimal). `frac_digits` — digits after the decimal
+/// point (default 6, like printf "%.6g"). Algorithm: BigFloat → BigDecimal →
+/// rescale(frac_digits, HalfEven) → to_str.
+#stable(since = "0.1")
+export fn BigFloat @to_str(frac_digits int = 6) -> str {
+    ro bd = @to_bigdecimal()
+    ro rounded = bd.rescale(frac_digits, HalfEven)
+    rounded.to_str(frac_digits)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BigFloat → f64 (checked)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Checked conversion to f64. `None` on overflow/underflow (value outside the
+/// f64 range after rounding to 53 bits); `Some(0.0)` for ±0. Round-to-nearest
+/// ties-to-even (IEEE 754), single rounding; subnormals are supported.
+#stable(since = "0.1")
+export fn BigFloat @to_f64() -> Option[f64] {
+    if @is_zero() { return Some(0.0) }
+    ro n = @normalize()
+    ro sign = n.mant.sign()
+    ro abs_m = n.mant.abs()
+    ro msb0 = n.exp + abs_m.bit_length() - 1
+    if msb0 > 1023 || msb0 < -1074 { return None }
+    ro sign_bit = if sign == Neg { (1 as u64) << 63 } else { 0 as u64 }
+    if msb0 >= -1022 {
+        ro (rounded, bits_lost) = round_to_precision(abs_m, 53, HalfEven, sign, false)
+        ro final_exp = n.exp + bits_lost
+        ro bl = rounded.bit_length()
+        ro msb = final_exp + bl - 1
+        if msb > 1023 { return None }
+        ro biased = (msb + 1023) as u64
+        ro frac = rounded.minus(BigInt.one().shl(bl - 1))
+        ro frac_val = match frac.to_int() {
+            Some(v) => v
+            None => panic("to_f64: fraction of a 53-bit mantissa out of int range")
+        }
+        ro mant_bits = (frac_val as u64) << (52 - (bl - 1))
+        Some(f64.from_bits(sign_bit | (biased << 52) | mant_bits))
+    } else {
+        ro t = -(n.exp + 1074)
+        ro m_sub = if t <= 0 {
+            abs_m.shl(-t)
+        } else {
+            ro (m_raw, m_lost) = round_to_precision(abs_m, abs_m.bit_length() - t, HalfEven, sign, false)
+            m_raw.shl(m_lost - t)
+        }
+        if m_sub.compare(BigInt.one().shl(52)) >= 0 {
+            Some(f64.from_bits(sign_bit | ((1 as u64) << 52)))
+        } else {
+            ro m_val = match m_sub.to_int() {
+                Some(v) => v
+                None => panic("to_f64: subnormal mantissa out of int range")
+            }
+            Some(f64.from_bits(sign_bit | (m_val as u64)))
+        }
+    }
+}
+
+/// `BigFloat` → `int` if it fits (checked). `None` on overflow.
+#stable(since = "0.1")
+export fn BigFloat @to_int() -> Option[int] {
+    ro bi = @to_bigint()
+    bi.to_int()
+}
+
+/// `BigFloat` → `i64` if it fits (checked). `None` on overflow.
+#stable(since = "0.1")
+export fn BigFloat @to_i64() -> Option[i64] {
+    ro bi = @to_bigint()
+    ro as_int = bi.to_int()
+    match as_int {
+        Some(v) => Some(v as i64)
+        None => None
+    }
+}
+
+/// `BigFloat` → `u64` if it fits (checked). `None` on overflow.
+#stable(since = "0.1")
+export fn BigFloat @to_u64() -> Option[u64] {
+    if @is_neg() { return None }
+    ro bi = @to_bigint()
+    ro as_int = bi.to_int()
+    match as_int {
+        Some(v) => Some(v as u64)
+        None => None
+    }
+}
+
+/// `BigFloat` → `BigInt` — truncation toward zero (drops the fractional part).
+/// exp ≥ 0 → mant × 2^{exp} (BigInt << exp);
+/// exp < 0 → |mant| >> |exp|, keeping the sign (truncation toward zero).
+#stable(since = "0.1")
+export fn BigFloat @to_bigint() -> BigInt {
+    if @exp >= 0 {
+        @mant.shl(@exp)
+    } else {
+        @mant.shr(-@exp)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BigFloat ↔ BigDecimal (§2.5)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `BigFloat` → `BigDecimal`. If exp ≥ 0: mant × 2^{exp} is an exact integer.
+/// If exp < 0: mant × 5^{|exp|} / 10^{|exp|} = BigDecimal(mant × 5^{|exp|}, |exp|).
+/// ⚠ 5^{|exp|} with |exp| > 10^5 is a large BigInt (O(n²)).
+#stable(since = "0.1")
+export fn BigFloat @to_bigdecimal() -> BigDecimal {
+    if @is_zero() { return BigDecimal.zero() }
+    if @exp >= 0 {
+        ro whole = @mant.shl(@exp)
+        BigDecimal.new(whole, 0)
+    } else {
+        ro scale = -@exp
+        ro numerator = @mant.abs() * pow5(scale)
+        ro sign = if @mant.is_neg() { -1 } else { 1 }
+        if sign < 0 {
+            BigDecimal.new(numerator.neg(), scale)
+        } else {
+            BigDecimal.new(numerator, scale)
+        }
+    }
+}
+
+/// `BigDecimal` → `BigFloat`, rounded to ctx precision.
+/// Algorithm: (mant × 2^{k}).div_rem(5^{scale}) → round_to_precision.
+/// ⚠ 5^{scale} with scale > 10^5 is a large BigInt (O(n²)).
+#stable(since = "0.1")
+export fn BigDecimal @to_bigfloat(ctx PrecisionContext) -> BigFloat {
+    if @mant.is_zero() { return BigFloat.zero() }
+    if @scale == 0 { return BigFloat.new(@mant, 0) }
+    ro k = ctx.prec + GUARD
+    ro sign = if @mant.is_neg() { Neg } else { Pos }
+    ro a_abs = @mant.abs()
+    ro dividend = a_abs.shl(k)
+    ro (quot, rem) = dividend.div_rem(pow5(@scale)) ?? panic("BigDecimal.to_bigfloat: 5^scale != 0")
+    ro sticky = !rem.is_zero()
+    ro (rounded, bits_lost) = round_to_precision(quot, ctx.prec, ctx.rm, sign, sticky)
+    ro exp_bf = -@scale - k + bits_lost
+    BigFloat.new(apply_sign(rounded, sign), exp_bf)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение / равенство (§2.4)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Full signed comparison. msb fast-path: compares the MOST SIGNIFICANT BIT
+/// position (msb = exp + bit_length(mant)). With equal msb — alignment shift
+/// (bounded by the bit_length difference of the mantissas, does not blow up).
+#stable(since = "0.1")
+export fn BigFloat @compare(other BigFloat) -> int {
+    ro a_s = @mant.sign()
+    ro b_s = other.mant.sign()
+    // Разные знаки (и не Zero)
+    if a_s != b_s {
+        if a_s == Neg { return -1 }
+        if a_s == Pos { return 1 }
+        // Zero vs non-zero
+        return if b_s == Neg { 1 } else { -1 }
+    }
+    // Знаки равны (включая Zero)
+    if a_s == Zero { return 0 }
+    ro inv = if a_s == Neg { -1 } else { 1 }
+    ro a_abs = @mant.abs()
+    ro b_abs = other.mant.abs()
+    ro msb_a = @exp + a_abs.bit_length()
+    ro msb_b = other.exp + b_abs.bit_length()
+    if msb_a != msb_b {
+        return (if msb_a > msb_b { 1 } else { -1 }) * inv
+    }
+    // msb равны → сдвиг выравнивания
+    if @exp < other.exp {
+        return a_abs.compare(b_abs.shl(other.exp - @exp)) * inv
+    } else {
+        return a_abs.shl(@exp - other.exp).compare(b_abs) * inv
+    }
+}
+
+/// Equality. Always normalizes BOTH operands before field-by-field
+/// comparison (lazy-normalize: after arithmetic mant may be even).
+#stable(since = "0.1")
+export fn BigFloat @equal(other BigFloat) -> bool {
+    ro a = @normalize()
+    ro b = other.normalize()
+    a.mant.equal(b.mant) && a.exp == b.exp
+}
+
+/// Hash consistent with @equal — normalizes before hashing.
+#stable(since = "0.1")
+export fn BigFloat @hash() -> u64 {
+    ro n = @normalize()
+    Fnv.hash_str(n.mant.to_str()) ^ (n.exp as u64)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика (§2.3) — вся через BigInt
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Addition with a PrecisionContext (exponent alignment).
+#stable(since = "0.1")
+export fn BigFloat @plus(other BigFloat, ctx PrecisionContext) -> BigFloat {
+    if @is_zero() { return BigFloat.new(other.mant, other.exp) }
+    if other.is_zero() { return BigFloat.new(@mant, @exp) }
+    ro a_sign = @mant.sign()
+    ro b_sign = other.mant.sign()
+    ro a_abs = @mant.abs()
+    ro b_abs = other.mant.abs()
+    ro (a_wide, b_wide, exp) = if @exp < other.exp {
+        ro diff = other.exp - @exp
+        (a_abs.shl(GUARD), b_abs.shl(diff + GUARD), @exp - GUARD)
+    } else {
+        ro diff = @exp - other.exp
+        (a_abs.shl(diff + GUARD), b_abs.shl(GUARD), other.exp - GUARD)
+    }
+    ro (mant_abs, sign) = if a_sign == b_sign {
+        (a_wide.plus(b_wide), a_sign)
+    } else {
+        if a_wide.compare(b_wide) >= 0 {
+            (a_wide.minus(b_wide), a_sign)
+        } else {
+            (b_wide.minus(a_wide), b_sign)
+        }
+    }
+    ro (mant, bits_lost) = round_to_precision(mant_abs, ctx.prec, ctx.rm, sign, false)
+    ro final_exp = exp + bits_lost
+    BigFloat.new(apply_sign(mant, sign), final_exp)
+}
+
+/// Subtraction with a PrecisionContext.
+#stable(since = "0.1")
+export fn BigFloat @minus(other BigFloat, ctx PrecisionContext) -> BigFloat =>
+    @plus(BigFloat.new(other.mant.neg(), other.exp), ctx)
+
+/// Multiplication with a PrecisionContext.
+#stable(since = "0.1")
+export fn BigFloat @times(other BigFloat, ctx PrecisionContext) -> BigFloat {
+    if @is_zero() || other.is_zero() { return BigFloat.zero() }
+    ro a_abs = @mant.abs()
+    ro b_abs = other.mant.abs()
+    ro sign = if @mant.sign() == other.mant.sign() { Pos } else { Neg }
+    ro mant_prod = a_abs.times(b_abs)
+    ro exp_sum = @exp + other.exp
+    ro (mant, bits_lost) = round_to_precision(mant_prod, ctx.prec, ctx.rm, sign, false)
+    ro final_exp = exp_sum + bits_lost
+    BigFloat.new(apply_sign(mant, sign), final_exp)
+}
+
+/// Negation (no context — sign flip).
+#stable(since = "0.1")
+export fn BigFloat @neg() -> BigFloat => BigFloat.new(@mant.neg(), @exp)
+
+/// Absolute value.
+#stable(since = "0.1")
+export fn BigFloat @abs() -> BigFloat {
+    if @sign() == Neg { @neg() } else { @ }
+}
+
+/// Division with a PrecisionContext (NOT the `/` operator). Division by zero panics.
+#stable(since = "0.1")
+export fn BigFloat @div(other BigFloat, ctx PrecisionContext) -> BigFloat
+    requires !other.mant.is_zero()
+{
+    ro a_abs = @mant.abs()
+    ro b_abs = other.mant.abs()
+    ro da = a_abs.bit_length()
+    ro db = b_abs.bit_length()
+    ro sign = if @mant.sign() == other.mant.sign() { Pos } else { Neg }
+    ro extra = ctx.prec + GUARD - da + db
+    ro k = if extra < 0 { 0 } else { extra }
+    ro dividend = a_abs.shl(k)
+    ro (quot, rem) = dividend.div_rem(b_abs) ?? panic("div: b_abs != 0 guaranteed by requires")
+    ro sticky = !rem.is_zero()
+    ro (mant, bits_lost) = round_to_precision(quot, ctx.prec, ctx.rm, sign, sticky)
+    // mant ≈ (a_abs/b_abs) × 2^{k - bits_lost}; value = mant × 2^{result_exp}
+    ro result_exp = @exp - other.exp - k + bits_lost
+    BigFloat.new(apply_sign(mant, sign), result_exp)
+}
+
+/// Square root (Newton's method). V1: ±1 ulp (not correctly-rounded).
+/// Requires self >= 0 — otherwise panics.
+#stable(since = "0.1")
+export fn BigFloat @sqrt(ctx PrecisionContext) -> BigFloat
+    requires !@mant.is_neg()
+{
+    if @mant.is_neg() { panic("sqrt: отрицательный аргумент (D423)") }
+    if @is_zero() { return BigFloat.zero() }
+    // Начальное приближение
+    mut prev = BigFloat.zero()
+    mut approx = match @to_f64() {
+        Some(v) => {
+            if v == 0.0 {
+                BigFloat.new(BigInt.one(), @exp / 2)
+            } else {
+                ro sq = v.sqrt()
+                ro init = sq.to_bigfloat()
+                BigFloat.new(init.mant, init.exp)
+            }
+        }
+        None => BigFloat.new(BigInt.one(), @exp / 2)
+    }
+    ro s = BigFloat.new(@mant, @exp)
+    mut iters = 0
+    ro max_iters = (ctx.prec as f64).log2() as int + 8
+    loop {
+        ro quot = s.div(approx, ctx)
+        ro sum = approx.plus(quot, ctx)
+        ro next = BigFloat.new(sum.mant, sum.exp - 1)
+        iters += 1
+        if next.equal(approx) || next.equal(prev) || iters > max_iters { break }
+        prev = approx
+        approx = next
+    }
+    approx
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Округление — precision-based (§2.2)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Round to `prec` significant BITS (do not confuse with `frac_digits` in `to_str`).
+/// Works like round_to_precision on the value itself. With prec >= bit_length
+/// → self (no-op).
+#stable(since = "0.1")
+export fn BigFloat @round(prec int, rm RoundingMode) -> BigFloat {
+    ro n = @normalize()
+    ro sign = n.mant.sign()
+    if sign == Zero { return BigFloat.zero() }
+    ro abs_m = n.mant.abs()
+    ro (mant, bits_lost) = round_to_precision(abs_m, prec, rm, sign, false)
+    ro final_exp = n.exp + bits_lost
+    BigFloat.new(apply_sign(mant, sign), final_exp)
+}
