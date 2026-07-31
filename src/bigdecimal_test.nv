@@ -423,9 +423,9 @@ test "edge: @to_int/@to_i128 — fits-проверка через normalize (в 
 // на #unverified `@div` не паникует ДО тела (call-expression в контракте под
 // #unverified не enforce'ится в рантайме, вопреки docs/contracts.ru.md).
 // Деление на ноль ВСЁ РАВНО паникует — через внутренний защитный
-// `?? panic(...)` на Err от BigInt.div_rem — паритет с int (D423) сохранён
-// функционально, просто другим путём. Паттерн ниже — фактическое сообщение.
-test "div: деление на ноль паникует (паритет int, D423) — panics-клаузула" panics "b_abs != 0" {
+// Contract-first: `requires !other.mant.is_zero()` now fires at the call
+// boundary (runtime contract check), int-parity (D423) preserved.
+test "div: деление на ноль паникует (паритет int, D423) — panics-клаузула" panics "requires failed" {
     ro a = bd(5, 0)
     ro mc = MathContext.new(5, HalfEven)
     ro _ = a.div(BigDecimal.zero(), mc)

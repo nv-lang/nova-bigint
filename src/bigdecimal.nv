@@ -414,7 +414,6 @@ export fn BigDecimal @times(other BigDecimal) -> BigDecimal =>
 /// Деление на ноль — PANIC (contract), паритет с примитивным `int` (D423);
 /// норма ДИЗАЙНА этого плана, не только тестовый артефакт.
 #stable(since = "0.1")
-#unverified
 export fn BigDecimal @div(other BigDecimal, mc MathContext) -> BigDecimal
     requires !other.mant.is_zero()
 {
