@@ -12,6 +12,7 @@ module bigint.bigrat
 
 import bigint.{BigInt, DivError, DivisionByZero}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.checksums.fnv.{Fnv}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
@@ -55,13 +56,36 @@ export fn BigRat.new(num BigInt, den BigInt) -> Result[BigRat, DivError] {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Привести `(num, den)` к нормальной форме: den > 0, знак в num, ноль = 0/1,
-/// gcd(|num|, den) == 1 (сокращение НОД — с Ф.2, после `BigInt @gcd`).
+/// gcd(|num|, den) == 1 (сокращение НОД — через `BigInt @gcd`, Ф.1).
 /// Вызывающий гарантирует `den != 0`.
 fn normalize_rat(num BigInt, den BigInt) -> BigRat {
     if num.is_zero() { return { num: BigInt.zero(), den: BigInt.one() } }
     ro n = if den.is_neg() { num.neg() } else { num }
     ro d = if den.is_neg() { den.neg() } else { den }
-    { num: n, den: d }
+    ro g = n.abs().gcd(d)
+    if g.is_one() {
+        { num: n, den: d }
+    } else {
+        { num: n.div(g) ?? panic("normalize_rat: g != 0"), den: d.div(g) ?? panic("normalize_rat: g != 0") }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Whether the value is zero (canonical form: 0/1).
+#stable(since = "0.1")
+export fn BigRat @is_zero() -> bool => @num.is_zero()
+
+/// Whether the value is an integer (den == 1 in normal form).
+#stable(since = "0.1")
+export fn BigRat @is_int() -> bool => @den.is_one()
+
+/// Sign of the value: -1 / 0 / 1. Denominator is positive, so the sign lives in the numerator.
+#stable(since = "0.1")
+export fn BigRat @sign() -> int {
+    if @num.is_neg() { -1 } else if @num.is_zero() { 0 } else { 1 }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -80,10 +104,24 @@ export fn BigRat @den() -> BigInt => @den
 // Равенство (нормальная форма делает покомпонентное сравнение корректным)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Равенство. `!=` выводится автоматически.
+/// Равенство. `!=` выводится автоматически. Покомпонентное сравнение корректно
+/// только благодаря нормальной форме (каноничность поддерживается каждой операцией).
 #stable(since = "0.1")
 export fn BigRat @equal(other BigRat) -> bool {
     @num.equal(other.num) && @den.equal(other.den)
+}
+
+/// Полное знаковое сравнение: -1 / 0 / 1. Кросс-умножение `num_a*den_b <=> num_b*den_a`
+/// (den > 0 ⇒ знаки корректны, float не участвует).
+#stable(since = "0.1")
+export fn BigRat @compare(other BigRat) -> int {
+    (@num * other.den).compare(other.num * @den)
+}
+
+/// Хэш, согласованный с `@equal` (нормальная форма ⇒ (num, den) уникальна).
+#stable(since = "0.1")
+export fn BigRat @hash() -> u64 {
+    Fnv.hash_str(@num.to_str()) ^ Fnv.hash_str(@den.to_str())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -123,6 +161,10 @@ export fn BigRat @minus(other BigRat) -> BigRat => @plus(other.neg())
 /// `-a`.
 #stable(since = "0.1")
 export fn BigRat @neg() -> BigRat => { num: @num.neg(), @den }
+
+/// Абсолютная величина.
+#stable(since = "0.1")
+export fn BigRat @abs() -> BigRat => { num: @num.abs(), @den }
 
 /// `a * b`. Оператор `*`.
 #stable(since = "0.1")

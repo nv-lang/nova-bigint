@@ -108,3 +108,87 @@ test "Ф.0(г): i128 @to_bigrat() — отдельная перегрузка" {
     ro z = i128().to_bigrat()
     assert(z.num().is_zero())
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.2: нормальная форма (НОД-сокращение), предикаты, @compare/@hash/@abs
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.2: new сокращает НОД — 2/4 == 1/2, -6/8 == -3/4" {
+    ro a = BigRat.new((2).to_bigint(), (4).to_bigint())!!
+    assert(a.num().equal((1).to_bigint()))
+    assert(a.den().equal((2).to_bigint()))
+
+    ro b = BigRat.new((-6).to_bigint(), (8).to_bigint())!!
+    assert(b.num().equal((-3).to_bigint()))
+    assert(b.den().equal((4).to_bigint()))
+
+    ro c = BigRat.new((12).to_bigint(), (18).to_bigint())!!
+    assert(c.num().equal((2).to_bigint()))
+    assert(c.den().equal((3).to_bigint()))
+}
+
+test "Ф.2: нормальная форма после знака — -1/-2 == 1/2, -2/4 == -1/2" {
+    ro a = BigRat.new((-1).to_bigint(), (-2).to_bigint())!!
+    assert(a.num().equal((1).to_bigint()))
+    assert(a.den().equal((2).to_bigint()))
+    ro b = BigRat.new((-2).to_bigint(), (4).to_bigint())!!
+    assert(b.num().equal((-1).to_bigint()))
+    assert(b.den().equal((2).to_bigint()))
+}
+
+test "Ф.2: @is_zero / @is_int / @sign" {
+    ro z = BigRat.zero()
+    assert(z.is_zero())
+    assert(z.is_int())
+    assert(z.sign() == 0)
+
+    ro h = br(1, 2)
+    assert(!h.is_zero())
+    assert(!h.is_int())
+    assert(h.sign() == 1)
+
+    ro neg = br(-3, 5)
+    assert(neg.sign() == -1)
+
+    ro five = br(5, 1)
+    assert(five.is_int())
+    assert(five.sign() == 1)
+}
+
+test "Ф.2: @abs" {
+    ro a = br(-3, 4)
+    ro p = a.abs()
+    assert(p.num().equal((3).to_bigint()))
+    assert(p.den().equal((4).to_bigint()))
+    assert(br(3, 4).abs().equal(p))
+    assert(BigRat.zero().abs().is_zero())
+}
+
+test "Ф.2: @equal — разные представления одного значения после нормализации" {
+    ro a = br(1, 2)
+    ro b = BigRat.new((2).to_bigint(), (4).to_bigint())!!
+    assert(a.equal(b))
+    assert(a == b)
+    ro c = BigRat.new((-1).to_bigint(), (-2).to_bigint())!!
+    assert(a.equal(c))
+    assert(a.hash() == c.hash())
+}
+
+test "Ф.2: @compare — кросс-умножение, знаки, дроби" {
+    assert(br(1, 2).compare(br(1, 3)) > 0)
+    assert(br(1, 3).compare(br(1, 2)) < 0)
+    assert(br(2, 3).compare(br(4, 6)) == 0)
+    assert(br(-1, 2).compare(br(0, 1)) < 0)
+    assert(br(0, 1).compare(br(-1, 2)) > 0)
+    assert(br(3, 4).compare(br(1, 1000000)) > 0)
+    assert(br(-3, 4).compare(br(-1, 2)) < 0)
+}
+
+test "Ф.2: @hash согласован с @equal на нормальной форме" {
+    ro a = br(3, 7)
+    ro b = br(3, 7)
+    ro c = br(7, 3)
+    assert(a.equal(b))
+    assert(a.hash() == b.hash())
+    assert(!a.equal(c))
+}
