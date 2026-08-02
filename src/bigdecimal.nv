@@ -386,7 +386,7 @@ export fn BigDecimal @hash() -> u64 {
 /// `a + b`. Оператор `+` (desugar `@plus`, прецедент `str @plus`).
 #stable(since = "0.1")
 export fn BigDecimal @plus(other BigDecimal) -> BigDecimal {
-    ro scale = if @scale > other.scale { @scale } else { other.scale }
+    ro scale = @scale.max(other.scale)
     ro a_mant = @mant * pow10(scale - @scale)
     ro b_mant = other.mant * pow10(scale - other.scale)
     BigDecimal.new(a_mant + b_mant, scale)
@@ -424,7 +424,7 @@ export fn BigDecimal @div(other BigDecimal, mc MathContext) -> BigDecimal
     ro da = a_abs.digits()
     ro db = b_abs.digits()
     ro k_raw = p + 2 - da + db
-    ro k = if k_raw > 0 { k_raw } else { 0 }
+    ro k = k_raw.max(0)
     ro expanded = a_abs * pow10(k)
     ro (quot, rem) = expanded.div_rem(b_abs) ?? panic("@div: b_abs != 0 гарантирован requires !other.mant.is_zero()")
     ro sticky = !rem.is_zero()

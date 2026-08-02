@@ -14,7 +14,7 @@ import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}
 
 // Guard bits для однократного правильного округления (Steele & White 1990).
-const GUARD int = 3
+const GUARD = 3
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
@@ -138,7 +138,7 @@ export fn BigFloat @normalize() -> BigFloat {
     while !mant.is_zero() && mant.is_even() {
         // Деление на 2 — BigInt сдвиг вправо
         mant = mant.shr(1)
-        exp = exp + 1
+        exp += 1
     }
     { mant, exp }
 }
@@ -344,7 +344,7 @@ fn parse_binary_str(s str, ctx PrecisionContext) -> Result[BigFloat, ParseBigFlo
     }
     // Построить мантиссу: собрать все биты
     mut all_bits = int_bits.clone()
-    for j in 0..frac_bits.len() { all_bits.push(frac_bits[j]) }
+    all_bits.append(frac_bits)
     if all_bits.len() == 0 { return Err(EmptyMantissa) }
     ro frac_len = frac_bits.len() as int
     // Убрать ведущие нули из all_bits
@@ -359,7 +359,7 @@ fn parse_binary_str(s str, ctx PrecisionContext) -> Result[BigFloat, ParseBigFlo
     for j in 0..sig_bits.len() {
         mant = mant.shl(1)
         if sig_bits[j] == ('1' as u8) {
-            mant = mant + BigInt.one()
+            mant += BigInt.one()
         }
     }
     ro exp_bf = -frac_len + exp - first_one  // откорректировать exp на лидирующие нули int-part
@@ -405,10 +405,7 @@ export fn BigFloat @to_f64() -> Option[f64] {
         if msb > 1023 { return None }
         ro biased = (msb + 1023) as u64
         ro frac = rounded.minus(BigInt.one().shl(bl - 1))
-        ro frac_val = match frac.to_int() {
-            Some(v) => v
-            None => panic("to_f64: fraction of a 53-bit mantissa out of int range")
-        }
+        ro frac_val = frac.to_int() ?? panic("to_f64: fraction of a 53-bit mantissa out of int range")
         ro mant_bits = (frac_val as u64) << (52 - (bl - 1))
         Some(f64.from_bits(sign_bit | (biased << 52) | mant_bits))
     } else {
@@ -422,10 +419,7 @@ export fn BigFloat @to_f64() -> Option[f64] {
         if m_sub.compare(BigInt.one().shl(52)) >= 0 {
             Some(f64.from_bits(sign_bit | ((1 as u64) << 52)))
         } else {
-            ro m_val = match m_sub.to_int() {
-                Some(v) => v
-                None => panic("to_f64: subnormal mantissa out of int range")
-            }
+            ro m_val = m_sub.to_int() ?? panic("to_f64: subnormal mantissa out of int range")
             Some(f64.from_bits(sign_bit | (m_val as u64)))
         }
     }
@@ -642,7 +636,7 @@ export fn BigFloat @div(other BigFloat, ctx PrecisionContext) -> BigFloat
     ro db = b_abs.bit_length()
     ro sign = if @mant.sign() == other.mant.sign() { Pos } else { Neg }
     ro extra = ctx.prec + GUARD - da + db
-    ro k = if extra < 0 { 0 } else { extra }
+    ro k = extra.max(0)
     ro dividend = a_abs.shl(k)
     ro (quot, rem) = dividend.div_rem(b_abs) ?? panic("div: b_abs != 0 guaranteed by requires")
     ro sticky = !rem.is_zero()
