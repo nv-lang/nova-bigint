@@ -143,10 +143,11 @@ export fn i128 @to_bigrat() -> BigRat {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (Ф.3 доводит до нормальной формы; Ф.0 — компилябельность)
+// Арифметика
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `a + b`. Оператор `+` (desugar `@plus`, прецедент семьи).
+/// `(a/b + c/d) = (a·d + c·b) / (b·d)`, затем нормальная форма.
 #stable(since = "0.1")
 export fn BigRat @plus(other BigRat) -> BigRat {
     ro n = @num * other.den + other.num * @den
@@ -170,4 +171,20 @@ export fn BigRat @abs() -> BigRat => { num: @num.abs(), @den }
 #stable(since = "0.1")
 export fn BigRat @times(other BigRat) -> BigRat {
     normalize_rat(@num * other.num, @den * other.den)
+}
+
+/// `1 / a`. Ноль → `Err(DivisionByZero)`. Оператор `/` не десугарится —
+/// Result-возврат (симметрия «`/` не оператор» у BigDecimal, D9).
+#stable(since = "0.1")
+export fn BigRat @recip() -> Result[BigRat, DivError] {
+    if @num.is_zero() { return Err(DivisionByZero) }
+    Ok(normalize_rat(@den, @num))
+}
+
+/// `a / b`. Ноль (b) → `Err(DivisionByZero)`. Оператор `/` не десугарится —
+/// Result-возврат (симметрия «`/` не оператор» у BigDecimal, D9).
+#stable(since = "0.1")
+export fn BigRat @div(other BigRat) -> Result[BigRat, DivError] {
+    if other.is_zero() { return Err(DivisionByZero) }
+    Ok(normalize_rat(@num * other.den, @den * other.num))
 }
