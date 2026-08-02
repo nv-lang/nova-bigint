@@ -10,7 +10,7 @@
 
 | Фаза | Статус | Коммит |
 |---|---|---|
-| Ф.0 Пины | **СТОП** (дефект codegen: операторный desugar на value-struct >16Б) | — |
+| Ф.0 Пины | **ЗЕЛЁНЫЙ** (блокер закрыт, реестр nova №274) | 0bd3ac5 (скаффолд) |
 | Ф.1 gcd в bigint.nv | ожидает | — |
 | Ф.2 Ядро bigrat | ожидает | — |
 | Ф.3 Арифметика | ожидает | — |
@@ -21,19 +21,11 @@
 Базовая линия (до работы): `nova check src --strict-effects` = 7/0/24,
 `nova test src` = 5/0/2 (SKIP 2 — bigdecimal/bigfloat без тел).
 
-## Текущее состояние (после СТОП)
+## Текущее состояние (после снятия блокера)
 
-- `nova check src --strict-effects`: PASS 10 / FAIL 0 / WARN 24 — статика зелёная
-  (включая новые `bigrat.nv`, `bigrat_test.nv`, `repro_test.nv`, `repro_direct_test.nv`).
-- `nova test src`: **CC-FAIL** на `src/bigrat_test.nv` (и на репро) — дефект компилятора.
-- СТОП-репорт: `REPORT-p240.md` (минимальное репро `src/repro_test.nv`).
-
-### Суть дефекта
-
-Plan 172.14: `ro`-параметр value-struct'а C-размером >16 Б эмитится как `T*`. BigRat
-(32 Б) впервые в пакете пробивает порог (BigInt = 16 Б — нет). Прямые вызовы
-`a.plus(b)`/`a.equal(b)` работают (проверено), но операторный desugar `+ - *` и `==`
-(Plan 175 / 172.4 обёртки `nova_vr_binop_*`/`nova_vr_ueq_*`) передают второй операнд
-по значению при объявленном `T*` → CC-FAIL «passing 'NovaValue_BigRat' to parameter of
-incompatible type 'NovaValue_BigRat *'». Компилятор не чинить, обход не делать —
-ожидание решения владельца.
+- Компилятор пересобран (фикс №274: auto-by-ref в операторных стабах), хеш
+  `017a24989c1c2c04862e32bc11bab341e2dfe9cebf547c0cbc20e1459063a006`.
+- `nova check src --strict-effects`: **PASS 11 / FAIL 0 / WARN 24** — статика зелёная.
+- `nova test src`: **PASS 8 / FAIL 0 / SKIP 3** — Ф.0 пины (а/а2/б/в/г) зелёные.
+- СТОП-репорт: `REPORT-p240.md` (история; блокер закрыт — см. резюме в конце файла).
+- Дальше: Ф.1 (gcd) → Ф.6 по плану.
