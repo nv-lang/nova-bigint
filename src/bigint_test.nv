@@ -741,3 +741,59 @@ test "div_rem Кнут: тождество q*b + r == a на всех векто
         assert(r.compare(b) < 0)
     }
 }
+
+// ── @gcd (Ф.1 плана 240): Евклид через @rem ────────────────────────────────
+
+test "gcd: известные пары" {
+    ro pairs = [
+        (48, 36, 12),
+        (1071, 462, 21),
+        (17, 5, 1),
+        (12, 18, 6),
+        (2, 2, 2),
+        (1, 1, 1),
+    ]
+    for p in pairs {
+        ro (av, bv, gv) = p
+        ro a = (av).to_bigint()
+        ro b = (bv).to_bigint()
+        assert(a.gcd(b).equal((gv).to_bigint()))
+    }
+}
+
+test "gcd: 0-кейсы" {
+    assert((0).to_bigint().gcd((0).to_bigint()).is_zero())
+    assert((0).to_bigint().gcd((5).to_bigint()).equal((5).to_bigint()))
+    assert((5).to_bigint().gcd((0).to_bigint()).equal((5).to_bigint()))
+    assert((-5).to_bigint().gcd((0).to_bigint()).equal((5).to_bigint()))
+}
+
+test "gcd: знаки — результат неотрицателен" {
+    ro a = (-48).to_bigint()
+    ro b = (-36).to_bigint()
+    ro g = a.gcd(b)
+    assert(g.equal((12).to_bigint()))
+    assert(g.is_pos())
+    assert((-48).to_bigint().gcd((36).to_bigint()).equal((12).to_bigint()))
+    assert((48).to_bigint().gcd((-36).to_bigint()).equal((12).to_bigint()))
+}
+
+test "gcd: большие числа — степени двойки и взаимно-простые" {
+    ro a = BigInt.one().shl(100)
+    ro b = BigInt.one().shl(60)
+    assert(a.gcd(b).equal(b))
+    ro m1 = "100000000000000000001".to_bigint()!!
+    ro m2 = "100000000000000000003".to_bigint()!!
+    assert(m1.gcd(m2).is_one())
+}
+
+test "gcd: Евклидово тождество gcd(a,b) == gcd(b, a % b)" {
+    ro a = "1427247692705959881058285969449495137370400945".to_bigint()!!
+    ro b = "1208925819614629174706189".to_bigint()!!
+    ro g1 = a.gcd(b)
+    ro r = a.rem(b)!!
+    ro g2 = b.gcd(r)
+    assert(g1.equal(g2))
+    assert(a.rem(g1)!!.is_zero())
+    assert(b.rem(g1)!!.is_zero())
+}

@@ -691,6 +691,21 @@ export fn BigInt @rem(other BigInt) -> Result[BigInt, DivError] {
     }
 }
 
+/// Greatest common divisor (Euclidean algorithm over `@rem`).
+/// The result is non-negative; `gcd(0, 0) == 0`.
+#stable(since = "0.1")
+export fn BigInt @gcd(other BigInt) -> BigInt {
+    if @is_zero() && other.is_zero() { return BigInt.zero() }
+    mut a = @abs()
+    mut b = other.abs()
+    while !b.is_zero() {
+        ro r = a.rem(b) ?? panic("gcd: divisor b != 0 guaranteed by loop")
+        a = b
+        b = r
+    }
+    a
+}
+
 /// Количество десятичных цифр (V1: через to_str).
 #stable(since = "0.1")
 export fn BigInt @digits() -> int {
