@@ -22,7 +22,7 @@ import std.checksums.fnv.{Fnv}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Режим округления. D406-канон: варианты через `|`, PascalCase.
-/// HalfEven — banker's (Java default) · HalfUp — школьное 0.5→+1 ·
+/// HalfEven — banker's rounding (IEEE 754 default; ties go to the even digit) · HalfUp — школьное 0.5→+1 ·
 /// HalfDown — 0.5→0 · Down — к нулю (усечение) · Up — от нуля ·
 /// Ceiling — к +∞ · Floor — к -∞.
 #stable(since = "0.1")
