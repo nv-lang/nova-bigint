@@ -7,11 +7,12 @@
 
 module bigint.bigrat_test
 
+import bigint.{BigInt}
 import std.math.int128.{i128}
 import std.prelude.core.{Option, Some, None}
 import bigint.bigrat.{BigRat, ParseBigRatError, Empty, OnlySign, InvalidCharacter, ZeroDenominator}
 import bigint.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
-import bigint.bigfloat.{BigFloat}
+import bigint.bigfloat.{BigFloat, PrecisionContext}
 
 fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
 
@@ -381,4 +382,274 @@ test "Ф.4: BigFloat @to_bigrat — точная конверсия" {
     assert(d.equal(br(5, 2)))
     ro z = BigFloat.new((0).to_bigint(), 99).to_bigrat()
     assert(z.is_zero())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.5: property-тесты (splitmix64, seed фиксирован), нормальная форма,
+// канонические вектора, эталон-кейсы семьи (BigRat как точный эталон)
+// ──────────────────────────────────────────────────────────────────────────
+
+// splitmix64 — тот же public-domain PRNG, что в std.testing.handlers и в
+// bigdecimal_test/bigfloat_test; реализован ЛОКАЛЬНО (прецедент пакета).
+fn splitmix64_step(seed u64) -> u64 {
+    mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    z ^ (z >> 31)
+}
+
+/// int в диапазоне [lo, hi] (включительно) из PRNG-состояния.
+fn rand_range(state u64, lo int, hi int) -> int {
+    ro span = (hi - lo + 1) as u64
+    lo + (state % span) as int
+}
+
+fn sign_of(v int) -> int {
+    if v < 0 { -1 } else if v > 0 { 1 } else { 0 }
+}
+
+/// Прямой assert нормальной формы BigRat: den > 0, gcd(|num|, den) == 1
+/// (через BigInt @gcd), ноль = 0/1.
+fn assert_normal(r BigRat) {
+    assert(r.den().is_pos())
+    ro g = r.num().abs().gcd(r.den())
+    assert(g.is_one())
+    if r.num().is_zero() { assert(r.den().is_one()) }
+}
+
+test "Ф.5: property — (a+b)-b == a, seed=7, N=300 (малые значения)" {
+    mut state = splitmix64_step(7)
+    for _ in 0..300 {
+        ro p = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro q = rand_range(state, 1, 1000); state = splitmix64_step(state)
+        ro r = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro s = rand_range(state, 1, 1000); state = splitmix64_step(state)
+        ro a = br(p, q)
+        ro b = br(r, s)
+        assert(a.plus(b).minus(b).equal(a))
+        assert(a.minus(b).plus(b).equal(a))
+    }
+}
+
+test "Ф.5: property — (a/b)*b == a (b != 0), seed=13, N=300" {
+    mut state = splitmix64_step(13)
+    for _ in 0..300 {
+        ro p = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro q = rand_range(state, 1, 1000); state = splitmix64_step(state)
+        ro rv = rand_range(state, -1000, 1000); state = splitmix64_step(state)
+        ro r = if rv == 0 { 1 } else { rv }
+        ro s = rand_range(state, 1, 1000); state = splitmix64_step(state)
+        ro a = br(p, q)
+        ro b = br(r, s)
+        assert(a.div(b)!!.times(b).equal(a))
+        assert(a.times(b).div(b)!!.equal(a))
+    }
+}
+
+test "Ф.5: property — compare-транзитивность против int-эталона, seed=17, N=300" {
+    mut state = splitmix64_step(17)
+    for _ in 0..300 {
+        ro x = rand_range(state, -100, 100); state = splitmix64_step(state)
+        ro y = rand_range(state, -100, 100); state = splitmix64_step(state)
+        ro z = rand_range(state, -100, 100); state = splitmix64_step(state)
+        ro a = (x).to_bigrat()
+        ro b = (y).to_bigrat()
+        ro c = (z).to_bigrat()
+        // compare == знаку int-разности — int-эталон
+        assert(a.compare(b) == sign_of(x - y))
+        assert(b.compare(a) == sign_of(y - x))
+        // антисимметрия
+        assert(a.compare(b) == -b.compare(a))
+        // транзитивность строгого порядка
+        if x < y && y < z { assert(a.compare(c) < 0) }
+        if x > y && y > z { assert(a.compare(c) > 0) }
+        // согласованность compare==0 с equal
+        assert((a.compare(b) == 0) == a.equal(b))
+    }
+}
+
+test "Ф.5: property — BigRat на целых == int-арифметика, seed=31, N=300" {
+    mut state = splitmix64_step(31)
+    for _ in 0..300 {
+        ro n1 = rand_range(state, -1000000, 1000000); state = splitmix64_step(state)
+        ro n2 = rand_range(state, -1000000, 1000000); state = splitmix64_step(state)
+        ro a = (n1).to_bigrat()
+        ro b = (n2).to_bigrat()
+        assert(a.plus(b).equal((n1 + n2).to_bigrat()))
+        assert(a.minus(b).equal((n1 - n2).to_bigrat()))
+        assert(a.times(b).equal((n1 * n2).to_bigrat()))
+        assert(a.neg().equal((-n1).to_bigrat()))
+    }
+}
+
+test "Ф.5: нормальная форма после каждой op — den > 0, gcd == 1" {
+    ro a = BigRat.new((4).to_bigint(), (8).to_bigint())!!
+    assert_normal(a)
+    ro b = br(3, 7)
+    assert_normal(b)
+    assert_normal(a.plus(b))
+    assert_normal(a.minus(b))
+    assert_normal(a.times(b))
+    assert_normal(a.div(b)!!)
+    assert_normal(br(2, 3).recip()!!)
+    assert_normal(br(-2, 4).neg())
+    assert_normal(br(-3, 6).abs())
+    assert_normal(BigRat.zero())
+    // гармоническая цепочка из 50 сложений: num/den растут, форма держится
+    mut h = BigRat.zero()
+    for i in 1..51 {
+        h = h.plus(br(1, i))
+        assert_normal(h)
+    }
+    assert(!h.is_int())
+}
+
+test "Ф.5: канонические вектора — 1/3+1/6 == 1/2, H_10 == 7381/2520" {
+    ro s = br(1, 3).plus(br(1, 6))
+    assert(s.equal(br(1, 2)))
+    assert_normal(s)
+    mut h = BigRat.zero()
+    for i in 1..11 {
+        h = h.plus(br(1, i))
+    }
+    assert(h.equal(BigRat.new((7381).to_bigint(), (2520).to_bigint())!!))
+    assert(h.num().equal((7381).to_bigint()))
+    assert(h.den().equal((2520).to_bigint()))
+}
+
+test "Ф.5: BigDecimal roundtrip — 1.25 ↔ 5/4 в обе стороны" {
+    ro r = "1.25".to_bigdecimal()!!.to_bigrat()
+    assert(r.equal(br(5, 4)))
+    assert(r.to_str() == "5/4")
+    ro d = br(5, 4).to_bigdecimal(MathContext.new(10, HalfEven))
+    assert(d.equal("1.25".to_bigdecimal()!!))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Эталон-кейсы мотива (тест-синергия семьи): ручное округление ТОЧНОГО
+// BigRat-частного против округлённого деления BigDecimal/BigFloat.
+// Расхождение = баг одного из двух. Ручное округление — независимая
+// реализация (никакого кода библиотеки, кроме BigInt).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// floor(log10(N/D)) для N > 0, D > 0 — позиция ведущей десятичной цифры.
+fn rat_dec_exp(num BigInt, den BigInt) -> int {
+    if num.compare(den) >= 0 {
+        ro q = num.div(den) ?? panic("rat_dec_exp: den != 0")
+        q.digits() - 1
+    } else {
+        mut p10 = BigInt.one()
+        mut j = 0
+        loop {
+            if num.times(p10).compare(den) >= 0 { break }
+            p10 = p10.times((10).to_bigint())
+            j += 1
+        }
+        -j
+    }
+}
+
+/// Ручное округление точной дроби q до p значащих десятичных цифр, HalfEven.
+/// Значение = mant × 10^{-t}.
+fn manual_round_half_even_dec(q BigRat, p int) -> BigDecimal {
+    ro neg = q.sign() < 0
+    ro n = q.num().abs()
+    ro d = q.den()
+    if n.is_zero() { return BigDecimal.new(BigInt.zero(), 0) }
+    ro e = rat_dec_exp(n, d)
+    ro t = p - 1 - e
+    ro p10 = (10).to_bigint()
+    ro (num, den) = if t >= 0 {
+        (n.times(p10.pow(t as uint)), d)
+    } else {
+        (n, d.times(p10.pow((-t) as uint)))
+    }
+    ro (qq, r) = num.div_rem(den) ?? panic("manual_round_dec: den != 0")
+    ro two_r = r.plus(r)
+    ro cmp = two_r.compare(den)
+    ro carry = cmp > 0 || (cmp == 0 && !qq.is_even())
+    ro m = if carry { qq.plus(BigInt.one()) } else { qq }
+    ro mant = if neg { m.neg() } else { m }
+    BigDecimal.new(mant, t)
+}
+
+/// floor(log2(N/D)) для N > 0, D > 0 — позиция ведущего бита.
+fn rat_bit_exp(num BigInt, den BigInt) -> int {
+    if num.compare(den) >= 0 {
+        ro q = num.div(den) ?? panic("rat_bit_exp: den != 0")
+        q.bit_length() - 1
+    } else {
+        mut pow2 = BigInt.one()
+        mut j = 0
+        loop {
+            if num.times(pow2).compare(den) >= 0 { break }
+            pow2 = pow2.shl(1)
+            j += 1
+        }
+        -j
+    }
+}
+
+/// Ручное округление точной дроби q до prec значащих БИТ, HalfEven.
+/// Значение = mant × 2^{exp}.
+fn manual_round_half_even_bin(q BigRat, prec int) -> BigFloat {
+    ro neg = q.sign() < 0
+    ro n = q.num().abs()
+    ro d = q.den()
+    if n.is_zero() { return BigFloat.zero() }
+    ro e = rat_bit_exp(n, d)
+    ro t = prec - 1 - e
+    ro (num, den) = if t >= 0 {
+        (n.shl(t), d)
+    } else {
+        (n, d.shl(-t))
+    }
+    ro (qq, r) = num.div_rem(den) ?? panic("manual_round_bin: den != 0")
+    ro two_r = r.plus(r)
+    ro cmp = two_r.compare(den)
+    ro carry = cmp > 0 || (cmp == 0 && !qq.is_even())
+    ro m = if carry { qq.plus(BigInt.one()) } else { qq }
+    ro mant = if neg { m.neg() } else { m }
+    BigFloat.new(mant, -t)
+}
+
+fn check_bd_div_ref(a_s str, b_s str, p int) {
+    ro a = a_s.to_bigdecimal()!!
+    ro b = b_s.to_bigdecimal()!!
+    ro q = a.to_bigrat().div(b.to_bigrat())!!
+    ro expect = manual_round_half_even_dec(q, p)
+    ro got = a.div(b, MathContext.new(p, HalfEven))
+    assert(got.equal(expect))
+}
+
+test "Ф.5: эталон — BigDecimal @div(HalfEven) == ручное округление точного BigRat-частного" {
+    check_bd_div_ref("1", "3", 1)
+    check_bd_div_ref("1", "3", 10)
+    check_bd_div_ref("19.99", "3", 4)
+    check_bd_div_ref("100", "7", 5)
+    check_bd_div_ref("0.001", "0.0003", 7)
+    check_bd_div_ref("-5.5", "1.1", 3)
+    check_bd_div_ref("123456789.123456", "0.0000001", 12)
+    check_bd_div_ref("99999999999999999999", "100000000000000000001", 10)
+}
+
+fn check_bf_div_ref(am int, ae int, bm int, be int, prec int) {
+    ro a = BigFloat.new((am).to_bigint(), ae)
+    ro b = BigFloat.new((bm).to_bigint(), be)
+    ro q = a.to_bigrat().div(b.to_bigrat())!!
+    ro expect = manual_round_half_even_bin(q, prec)
+    ro got = a.div(b, PrecisionContext.new(prec, HalfEven))
+    assert(got.equal(expect))
+}
+
+test "Ф.5: эталон — BigFloat @div == ручное округление точного BigRat-частного (to_bigrat обеих сторон)" {
+    check_bf_div_ref(3, 0, 2, 0, 8)
+    check_bf_div_ref(1, 0, 2, 0, 2)
+    check_bf_div_ref(3, -3, 1, -2, 8)
+    check_bf_div_ref(5, -1, 1, -3, 8)
+    check_bf_div_ref(-6, 0, 3, 0, 8)
+    check_bf_div_ref(1, 0, 16, 0, 4)
+    check_bf_div_ref(1, 0, 3, 0, 8)
+    check_bf_div_ref(-7, -1, 11, 0, 16)
+    check_bf_div_ref(1, -5, 7, 2, 24)
 }

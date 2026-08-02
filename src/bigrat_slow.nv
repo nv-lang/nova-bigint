@@ -1,0 +1,73 @@
+// Тесты bigrat — БОЛЬШИЕ вектора (план 240, Ф.5).
+// Файл `*_slow.nv`: в дефолтном `nova test src` НЕ исполняется (slow-lane,
+// Plan 156/D376 — суффикс `_slow`), включается флагом
+// `nova test src --include-slow`. В репо хранится как часть пакета:
+// `nova check src` его проверяет, `nova lint` — линтует.
+
+module bigint.bigrat_slow
+
+import bigint.{BigInt}
+import bigint.bigrat.{BigRat}
+import bigint.bigfloat.{BigFloat}
+
+fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
+
+fn fact_bi(n int) -> BigInt {
+    mut acc = BigInt.one()
+    for i in 2..(n + 1) {
+        acc = acc.times((i).to_bigint())
+    }
+    acc
+}
+
+test "slow: 100!/99! == 100 — большие num/den с НОД-сокращением" {
+    ro f100 = fact_bi(100)
+    ro f99 = fact_bi(99)
+    ro r = BigRat.new(f100, f99)!!
+    assert(r.equal(br(100, 1)))
+    assert(r.is_int())
+    assert(r.num().equal((100).to_bigint()))
+    assert(r.den().is_one())
+}
+
+test "slow: 2^200/2^199 == 2 — большие степени двойки" {
+    ro n = BigInt.one().shl(200)
+    ro d = BigInt.one().shl(199)
+    ro r = BigRat.new(n, d)!!
+    assert(r.equal(br(2, 1)))
+}
+
+test "slow: телескопическое произведение i/(i+1), i=1..1000 == 1/1001" {
+    mut p = BigRat.one()
+    for i in 1..1001 {
+        p = p.times(br(i, i + 1))
+        assert(p.den().is_pos())
+        assert(p.num().abs().gcd(p.den()).is_one())
+    }
+    assert(p.equal(br(1, 1001)))
+}
+
+test "slow: H_100 — порядок суммирования не влияет (точная арифметика)" {
+    mut fwd = BigRat.zero()
+    for i in 1..101 {
+        fwd = fwd.plus(br(1, i))
+    }
+    mut rev = BigRat.zero()
+    mut i = 100
+    while i >= 1 {
+        rev = rev.plus(br(1, i))
+        i = i - 1
+    }
+    assert(fwd.equal(rev))
+    assert(fwd.den().is_pos())
+    assert(fwd.num().abs().gcd(fwd.den()).is_one())
+    assert(fwd.den().bit_length() > 100)
+}
+
+test "slow: BigFloat @to_bigrat — большая степень двойки в знаменателе" {
+    ro den = BigInt.one().shl(300)
+    ro bf = BigFloat.new(BigInt.one(), -300)
+    ro r = bf.to_bigrat()
+    assert(r.equal(BigRat.new(BigInt.one(), den)!!))
+    assert(r.times(BigRat.new(den, BigInt.one())!!).equal(BigRat.one()))
+}

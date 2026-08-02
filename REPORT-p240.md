@@ -364,3 +364,134 @@ RUN-FAIL src/repro_parse_test
    кодогенератора (фикс компилятора или санкционированный обход). Репро-файл
    `src/repro_parse_test.nv` оставлен в дереве как доказательство; после закрытия
    дефекта удаляется в Ф.6 вместе с `repro_test.nv`/`repro_direct_test.nv`.
+
+---
+
+# Резюме 2026-08-02 — блокер Ф.4 ЗАКРЫТ, Ф.4 ЗЕЛЁНАЯ
+
+## Хеш компилятора (пересобран с фиксами реестр nova №279/#280)
+
+```
+sha256: df16073e7900631d0459014ac59c0b0d56f8b12665b8ec87efa9a60c7dd1729c
+```
+
+## Перегон гейтов
+
+```
+$ nova test src/repro_parse_test.nv
+PASS          src/repro_parse_test     # №279/#280 подтверждены на репро
+
+$ nova test src
+PASS: 9  FAIL: 0  SKIP: 3
+```
+
+Ф.4 (строки `p/q` и целые формы, ошибки парсинга, `@to_str`/`@to_int`/`@to_i128`,
+связка BigDecimal↔BigRat, BigFloat @to_bigrat) — **ЗЕЛЁНАЯ** (коммиты `451a096`,
+`c908b7c`). Репро-файлы удаляются в Ф.6.
+
+---
+
+# СТОП-репорт — План 240 (BigRat V1), фаза Ф.5
+
+Дата: 2026-08-02. Компилятор — тот же, что на Ф.4-резюме
+(`df16073e…1729c`). Блокер **закрыт в рамках Ф.5** через санкционированный обход
+(документация дефекта; фикс компилятора №281/№282 не требуется владельцем — обход
+в тестах).
+
+## Симптом
+
+Ф.5 (тесты и эталон-кейсы) добавлена, но `nova test src/bigrat_test.nv` виснет
+(бесконечный цикл в тесте; harness убивает по таймауту):
+
+```
+$ nova test src/bigrat_test.nv --timeout 300
+TIMEOUT src/bigrat_test   # killed after 304805ms
+# user 0.1s / sys 0.6s при real 5m7s — цикл крутится в дочернем процессе
+```
+
+## Минимальное репро
+
+Самодостаточно (BigInt из пакета), `while`-условие — цепочка вызовов методов:
+
+```nova
+module bigint.repro_while_test
+
+import bigint.{BigInt}
+
+fn count_up(num BigInt, den BigInt) -> int {
+    mut p10 = BigInt.one()
+    mut j = 0
+    while num.times(p10).compare(den) < 0 {   // <- виснет
+        p10 = p10.times((10).to_bigint())
+        j += 1
+    }
+    -j
+}
+
+test "repro: while with method-chain condition" {
+    assert(count_up((1).to_bigint(), (3).to_bigint()) == -1)
+}
+```
+
+Прогон: `TIMEOUT` (64s). Контроль — тот же цикл через `loop`/`break` (условие в
+теле, `if … break`): **PASS**.
+
+## Корневая причина (дефект codegen компилятора)
+
+Условие `while` с цепочкой методов эмитится в C как временная переменная,
+**вычисляемая ОДИН раз до цикла и не пересчитываемая на итерациях**:
+
+```c
+/* SRC: while num.times(p10).compare(den) < 0 { */
+NovaValue_BigInt _nv_tmp_1418 = Nova_BigInt_method_times(&(num), p10);
+while ((Nova_BigInt_method_compare(&_nv_tmp_1418, den) < ((nova_int)0LL))) {
+    p10 = Nova_BigInt_method_times(&(p10), Nova_nova_int_method_to_bigint(((nova_int)10LL)));
+    j = nova_int_checked_add(j, ((nova_int)1LL));
+}
+```
+
+Для `1/3`: `num*1 < den` остаётся истинным всегда → `j` растёт без предела →
+бесконечный цикл. Простые условия `while i >= 1` (константа/переменная слева)
+работают корректно — дефект именно в цепочке вызовов внутри условия.
+
+**Вердикт по корню:** дефект кодогенератора (неправильный hoisting временной
+переменной условия `while`), не ошибка в коде тестов. По правилам BRIEF: компилятор
+не чинить, молча не обходить → дефект задокументирован, обход применён и отражён
+здесь: в `bigrat_test.nv` (и `bisect*-scratch`, удалённых) `while`-цепочки заменены
+на эквивалент `loop { if … break }`.
+
+## Что сделано в Ф.5
+
+- `src/bigrat_test.nv`: property-тесты (splitmix64 seed'ы 7/13/17/31, N=300,
+  против int-эталона), нормальная форма после каждой op (+ гармоническая цепочка
+  `1..50`), канонические вектора (`1/3+1/6==1/2`, `H_10 == 7381/2520`),
+  BigDecimal roundtrip `1.25 ↔ 5/4`, эталон-кейсы деления: ручное округление
+  (HalfEven) точного BigRat-частного vs `BigDecimal @div(MathContext)` (8 векторов)
+  и vs `BigFloat @div` через `to_bigrat` обеих сторон (9 векторов).
+- `src/bigrat_slow.nv` (slow-lane, не в дефолтном прогоне): `100!/99!==100`,
+  `2^200/2^199==2`, телескопический продукт `i/(i+1)` i=1..1000 == `1/1001`,
+  H_100, `BigFloat @to_bigrat` на `1/2^300`.
+- По ходу исправлено: `E_READONLY_COERCE` (в `rat_dec_exp`/`rat_bit_exp` — старт
+  с `BigInt.one()`, а не `mut acc = num`); `W_NON_COMPOUND_ASSIGN` (`j += 1`);
+  CC-FAIL `Nova_BigFloat` — файлы, импортирующие `bigint.bigrat`, обязаны
+  импортировать `bigint.bigfloat.{BigFloat}` (тип нужен кодогену из-за
+  `BigFloat @to_bigrat` в `bigrat.nv`).
+
+## Вердикты гейтов (Ф.5)
+
+```
+$ nova test src
+PASS: 9  FAIL: 0  SKIP: 4
+
+$ nova test src/bigrat_slow.nv --include-slow
+PASS: 1  FAIL: 0
+
+$ nova check src --strict-effects
+PASS: 13  FAIL: 0  WARN: 38
+
+$ nova lint src/bigrat.nv src/bigrat_test.nv src/bigrat_slow.nv
+lint: 3 file(s), 0 finding(s)
+```
+
+Ф.5 **ЗЕЛЁНАЯ** (коммит фазы будет). Ф.6: англ. doc-комменты, README, удаление
+`repro_*.nv`.
