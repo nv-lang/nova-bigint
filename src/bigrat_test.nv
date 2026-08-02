@@ -540,8 +540,7 @@ fn rat_dec_exp(num BigInt, den BigInt) -> int {
     } else {
         mut p10 = BigInt.one()
         mut j = 0
-        loop {
-            if num.times(p10).compare(den) >= 0 { break }
+        while num.times(p10).compare(den) < 0 {
             p10 = p10.times((10).to_bigint())
             j += 1
         }
@@ -581,8 +580,7 @@ fn rat_bit_exp(num BigInt, den BigInt) -> int {
     } else {
         mut pow2 = BigInt.one()
         mut j = 0
-        loop {
-            if num.times(pow2).compare(den) >= 0 { break }
+        while num.times(pow2).compare(den) < 0 {
             pow2 = pow2.shl(1)
             j += 1
         }
