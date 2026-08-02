@@ -7,6 +7,7 @@
 - **Арифметика:** `+`, `-`, `*`, `/`, `%`, `div_rem`, `pow`
 - **Сравнение:** `==`, `!=`, `<`, `>`, `compare`
 - **Знак/модуль:** `sign`, `is_zero`, `is_neg`, `is_one`, `neg`, `abs`
+- **Теория чисел:** `gcd` (бинарный алгоритм Штейна)
 - **Конверсии:**
   - `T @to_bigint()` — любой `Ints` (`i8`..`i64`, `u8`..`u64`)
   - `i128 @to_bigint()` — библиотечный 128-битный тип
@@ -18,8 +19,7 @@
 
 ## Чего НЕТ в V1
 
-- `gcd`, `modpow`, битовые операции (`&`, `|`, `<<`, `>>`)
-- `BigRat`, `BigFloat`
+- `modpow`, битовые операции (`&`, `|`, `<<`, `>>`)
 - Неявные коэрсии `int → BigInt`
 - Литеральная форма `123456789012345678901n`
 - Toom-3 умножение
@@ -62,6 +62,45 @@ assert(price.plus(tax).to_str() == "20.00")     // не 20.000000000000004, ка
 ro third = (1).to_bigdecimal().div((3).to_bigdecimal(), MathContext.new(4, HalfEven))
 assert(third.to_str() == "0.3333")
 ```
+
+## BigFloat (V1) — двоичное с плавающей точкой произвольной точности
+
+`type BigFloat value { mant BigInt, exp int }` — значение = `mant × 2^exp`
+(план 237; аналог MPFR/`big.Float`). Точность задаётся явно:
+`PrecisionContext { precision int, rm RoundingMode }`.
+
+- **Арифметика:** `@plus`/`@minus`/`@times`/`@div`/`@sqrt` — все с явным
+  `PrecisionContext`; `@neg`/`@abs` точные; `@round(prec, rm)`.
+- **Сравнение/равенство:** `@compare` (точное, без округления), `@equal`/`@hash`
+  (нормальная форма).
+- **Конверсии:** `T @to_bigfloat(ctx)` (все `Ints` + `i128` — точные; `f64` —
+  точная, без ctx; `str` — десятичная и `0b`-двоичная →
+  `Result[BigFloat, ParseBigFloatError]`), `@to_f64()`/`@to_int()`/`@to_i64()`/
+  `@to_u64() -> Option[...]`, `@to_bigint()` (trunc), `@to_str(frac_digits = 6)`,
+  пара `BigDecimal <-> BigFloat` (через ctx).
+- Деление/`sqrt` на нуле — panic (паритет `int`, D423).
+
+## BigRat (V1) — точные рациональные числа
+
+`type BigRat value { num BigInt, den BigInt }` — несократимая дробь,
+`den > 0`, ноль каноничен как `0/1` (план 240; аналог `big.Rat`/`num-rational`).
+Каждая операция возвращает нормальную форму — `@equal` структурное, без
+выравнивания.
+
+- **Арифметика:** `@plus`/`@minus`/`@times` (точные, без округления),
+  `@div`/`@recip` → `Result[BigRat, DivError]` (ноль — значением, не panic:
+  в отличие от `int`-паритета выше, здесь ошибка возникает из данных).
+- **Наблюдатели:** `@num()`/`@den()`, `@sign()`, `@is_zero()`, `@is_int()`,
+  `@compare`/`@equal`/`@hash`.
+- **Конверсии:** `T @to_bigrat()` (все `Ints` + `i128` — точные),
+  `str @to_bigrat()` (формы `"3/4"`, `"-12"`, десятичная `"1.25"`) →
+  `Result[BigRat, ParseBigRatError]`, `@to_str()` (`"num/den"` или целое),
+  `@to_int() -> Option[int]`; мосты: `BigDecimal @to_bigrat()` (точный),
+  `BigRat @to_bigdecimal(mc)` (округление по `MathContext`),
+  `BigFloat @to_bigrat()` (точный).
+
+Семья конверсий: **точные направления без контекста, теряющие точность — только
+с явным `MathContext`/`PrecisionContext`** (скрытых округлений нет).
 
 ## Представление
 
