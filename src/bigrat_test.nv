@@ -326,7 +326,7 @@ test "Ф.4: @to_str — p/q, целые без знаменателя, roundtrip
     assert(br(1, 2).to_str() == "1/2")
     assert(br(-3, 4).to_str() == "-3/4")
     assert(br(0, 1).to_str() == "0")
-    ro s = "123456789/987654321"
+    ro s = "1234567891/9876543211"
     assert(s.to_bigrat()!!.to_str() == s)
 }
 
