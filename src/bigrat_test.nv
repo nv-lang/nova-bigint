@@ -1,0 +1,110 @@
+// Тесты bigrat — точные рациональные числа поверх BigInt.
+// План 240 (docs/plans/240-bigrat.md в репе nova).
+// Ф.0: пины компилябельности — (а) value-record с двумя BigInt-полями,
+// (а2) статик-конструкторы + instance-метод на одном value-record типе,
+// (б) операторный desugar + - *, (в) кросс-модульный DivError из bigint,
+// (г) бланкет `fn[T Ints] T @to_bigrat()` → `@to_bigint()` в пакетном CU.
+
+module bigint.bigrat_test
+
+import std.math.int128.{i128}
+import bigint.bigrat.{BigRat}
+
+fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.0 пин (а): value-record с двумя BigInt-полями собирается и читается
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.0(a): value-record с двумя BigInt-полями — num/den читаются" {
+    ro r = BigRat.new((1).to_bigint(), (2).to_bigint())!!
+    assert(r.num.equal((1).to_bigint()))
+    assert(r.den.equal((2).to_bigint()))
+    assert(r.num().equal((1).to_bigint()))
+    assert(r.den().equal((2).to_bigint()))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.0 пин (а2): статик-конструкторы + instance-метод на одном типе
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.0(a2): BigRat.zero()/one()/new() + @equal на одном value-record" {
+    ro z = BigRat.zero()
+    assert(z.num().is_zero())
+    assert(z.den().is_one())
+
+    ro o = BigRat.one()
+    assert(o.num().is_one())
+    assert(o.den().is_one())
+
+    ro a = br(1, 2)
+    ro b = br(1, 2)
+    ro c = br(2, 3)
+    assert(a.equal(b))
+    assert(!a.equal(c))
+    assert(a == b)
+}
+
+test "Ф.0(a2): new нормализует знак — -1/-2 == 1/2, 0/5 == 0/1" {
+    ro a = BigRat.new((-1).to_bigint(), (-2).to_bigint())!!
+    assert(a.num().equal((1).to_bigint()))
+    assert(a.den().equal((2).to_bigint()))
+    ro b = BigRat.new((0).to_bigint(), (5).to_bigint())!!
+    assert(b.num().is_zero())
+    assert(b.den().is_one())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.0 пин (в): DivError виден в bigint.bigrat (кросс-модульный импорт)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.0(b): new(x, 0) → Err(DivisionByZero)" {
+    match BigRat.new((1).to_bigint(), (0).to_bigint()) {
+        Err(DivisionByZero) => assert(true)
+        _ => assert(false)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.0 пин (б): операторный desugar + - * на новом типе
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.0(б): операторы + - * работают на BigRat" {
+    ro a = br(1, 2)
+    ro b = br(1, 3)
+    ro s = a + b
+    assert(s.num().equal((5).to_bigint()))
+    assert(s.den().equal((6).to_bigint()))
+
+    ro d = a - b
+    assert(d.num().equal((1).to_bigint()))
+    assert(d.den().equal((6).to_bigint()))
+
+    ro m = a * b
+    assert(m.num().equal((1).to_bigint()))
+    assert(m.den().equal((6).to_bigint()))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.0 пин (г): бланкет T @to_bigrat зовёт бланкет @to_bigint из generic-тела
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.0(г): бланкет T @to_bigrat() (generic-из-generic) — int" {
+    ro r = (42).to_bigrat()
+    assert(r.num().equal((42).to_bigint()))
+    assert(r.den().is_one())
+    ro neg = (-7).to_bigrat()
+    assert(neg.num().equal((-7).to_bigint()))
+    ro z = (0).to_bigrat()
+    assert(z.num().is_zero())
+    ro big = (0xFFFFFFFFFFFFFFFF as u64).to_bigrat()
+    assert(!big.num().is_zero())
+}
+
+test "Ф.0(г): i128 @to_bigrat() — отдельная перегрузка" {
+    ro r = i128(0, 7).to_bigrat()
+    assert(r.num().equal((7).to_bigint()))
+    assert(r.den().is_one())
+    ro z = i128().to_bigrat()
+    assert(z.num().is_zero())
+}

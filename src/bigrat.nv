@@ -1,0 +1,131 @@
+// Точные рациональные числа: num / den над BigInt.
+// Поверх BigInt (bigint.nv, план 235). План: docs/plans/240-bigrat.md
+// в репе nova. Своей арифметики лимбов нет — вся арифметика через BigInt.
+//
+// Value-record: копия = два BigInt (heap-указатели). Нормальная форма
+// (инвариант КАЖДОЙ операции): den > 0 (знак живёт в num), gcd(|num|, den) == 1,
+// канонический ноль = 0/1. Нормализация ЖАДНАЯ (в каждом конструкторе/операции) —
+// в отличие от lazy-нормализации BigDecimal: для рациональных сокращение —
+// защита от взрыва num/den по цепочке операций, не косметика.
+
+module bigint.bigrat
+
+import bigint.{BigInt, DivError, DivisionByZero}
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Ошибка разбора строки `"p/q"` или `"n"` в BigRat.
+#stable(since = "0.1")
+export type ParseBigRatError enum
+    | Empty
+    | OnlySign
+    | InvalidCharacter
+    | ZeroDenominator
+
+/// Точное рациональное число: значение = `num / den`.
+/// Инвариант нормальной формы (поддерживается каждой операцией):
+/// `den > 0`, `gcd(|num|, den) == 1`, ноль = `0/1`.
+#stable(since = "0.1")
+export type BigRat value {
+    num BigInt
+    den BigInt
+}
+
+/// Ноль (каноничная форма: 0/1).
+#stable(since = "0.1")
+export fn BigRat.zero() -> BigRat => { num: BigInt.zero(), den: BigInt.one() }
+
+/// Единица (1/1).
+#stable(since = "0.1")
+export fn BigRat.one() -> BigRat => { num: BigInt.one(), den: BigInt.one() }
+
+/// Построить `BigRat` из числителя и знаменателя, приведя к нормальной форме.
+/// `den == 0` → `Err(DivisionByZero)` (паритет `BigInt @div_rem`).
+#stable(since = "0.1")
+export fn BigRat.new(num BigInt, den BigInt) -> Result[BigRat, DivError] {
+    if den.is_zero() { return Err(DivisionByZero) }
+    Ok(normalize_rat(num, den))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Приватные хелперы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Привести `(num, den)` к нормальной форме: den > 0, знак в num, ноль = 0/1,
+/// gcd(|num|, den) == 1 (сокращение НОД — с Ф.2, после `BigInt @gcd`).
+/// Вызывающий гарантирует `den != 0`.
+fn normalize_rat(num BigInt, den BigInt) -> BigRat {
+    if num.is_zero() { return { num: BigInt.zero(), den: BigInt.one() } }
+    ro n = if den.is_neg() { num.neg() } else { num }
+    ro d = if den.is_neg() { den.neg() } else { den }
+    { num: n, den: d }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Свойства (D84/D409, образец `BigDecimal @scale()`)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Числитель.
+#stable(since = "0.1")
+export fn BigRat @num() -> BigInt => @num
+
+/// Знаменатель (всегда > 0 в нормальной форме).
+#stable(since = "0.1")
+export fn BigRat @den() -> BigInt => @den
+
+// ──────────────────────────────────────────────────────────────────────────
+// Равенство (нормальная форма делает покомпонентное сравнение корректным)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Равенство. `!=` выводится автоматически.
+#stable(since = "0.1")
+export fn BigRat @equal(other BigRat) -> bool {
+    @num.equal(other.num) && @den.equal(other.den)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии (на источнике — nv-coding-style §1а)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Любой примитивный целый тип (`Ints`) → `BigRat` (n/1).
+#stable(since = "0.1")
+export fn[T Ints] T @to_bigrat() -> BigRat {
+    ro bi = @to_bigint()
+    if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } }
+}
+
+/// `i128` → `BigRat` (n/1). Явная перегрузка — `i128` не входит в `Ints`.
+#stable(since = "0.1")
+export fn i128 @to_bigrat() -> BigRat {
+    ro bi = @to_bigint()
+    if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика (Ф.3 доводит до нормальной формы; Ф.0 — компилябельность)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `a + b`. Оператор `+` (desugar `@plus`, прецедент семьи).
+#stable(since = "0.1")
+export fn BigRat @plus(other BigRat) -> BigRat {
+    ro n = @num * other.den + other.num * @den
+    ro d = @den * other.den
+    normalize_rat(n, d)
+}
+
+/// `a - b`. Оператор `-`.
+#stable(since = "0.1")
+export fn BigRat @minus(other BigRat) -> BigRat => @plus(other.neg())
+
+/// `-a`.
+#stable(since = "0.1")
+export fn BigRat @neg() -> BigRat => { num: @num.neg(), @den }
+
+/// `a * b`. Оператор `*`.
+#stable(since = "0.1")
+export fn BigRat @times(other BigRat) -> BigRat {
+    normalize_rat(@num * other.num, @den * other.den)
+}
