@@ -1,0 +1,35 @@
+module bigint.repro_parse_test
+
+import bigint.bigrat.{BigRat, ParseBigRatError, Empty, OnlySign, InvalidCharacter, ZeroDenominator}
+import bigint.bigfloat.{BigFloat}
+import bigint.{ParseBigIntError}
+
+fn map_err(e ParseBigIntError) -> ParseBigRatError {
+    match e {
+        Empty => Empty
+        OnlySign => OnlySign
+        InvalidCharacter => InvalidCharacter
+    }
+}
+
+fn parse(s str) -> Result[BigRat, ParseBigRatError] {
+    ro n = s.to_bigint()
+    match n {
+        Ok(v) => Ok(BigRat.new(v, BigRat.one().den())!!)
+        Err(e) => Err(map_err(e))
+    }
+}
+
+test "repro: nested Err(OnlySign) pattern on ParseBigRatError" {
+    match parse("-") {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "repro: nested Err(InvalidCharacter) pattern on ParseBigRatError" {
+    match parse("a") {
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+}

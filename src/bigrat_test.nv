@@ -8,7 +8,10 @@
 module bigint.bigrat_test
 
 import std.math.int128.{i128}
-import bigint.bigrat.{BigRat}
+import std.prelude.core.{Option, Some, None}
+import bigint.bigrat.{BigRat, ParseBigRatError, Empty, OnlySign, InvalidCharacter, ZeroDenominator}
+import bigint.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
+import bigint.bigfloat.{BigFloat}
 
 fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
 
@@ -271,4 +274,111 @@ test "Ф.3: операторы + - * и деление дают нормальн
     ro c = br(1, 2).div(br(1, 2))!!
     assert(c.equal(br(1, 1)))
     assert(c.is_int())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.4: строки — str @to_bigrat / @to_str / @to_int / @to_i128
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.4: str @to_bigrat — целые и p/q формы" {
+    ro a = "5".to_bigrat()!!
+    assert(a.equal(br(5, 1)))
+    ro b = "-5".to_bigrat()!!
+    assert(b.equal(br(-5, 1)))
+    ro c = "1/2".to_bigrat()!!
+    assert(c.equal(br(1, 2)))
+    ro d = "-1/2".to_bigrat()!!
+    assert(d.equal(br(-1, 2)))
+    ro e = "1/-2".to_bigrat()!!
+    assert(e.equal(br(-1, 2)))
+    ro f = "2/4".to_bigrat()!!
+    assert(f.equal(br(1, 2)))
+    ro g = "0/5".to_bigrat()!!
+    assert(g.is_zero())
+    assert(g.den().is_one())
+}
+
+test "Ф.4: str @to_bigrat — ошибки парсинга" {
+    match "".to_bigrat() {
+        Err(Empty) => assert(true)
+        _ => assert(false)
+    }
+    match "-".to_bigrat() {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+    match "a/2".to_bigrat() {
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+    match "1/0".to_bigrat() {
+        Err(ZeroDenominator) => assert(true)
+        _ => assert(false)
+    }
+    match "1/".to_bigrat() {
+        Err(Empty) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "Ф.4: @to_str — p/q, целые без знаменателя, roundtrip" {
+    assert(br(5, 1).to_str() == "5")
+    assert(br(1, 2).to_str() == "1/2")
+    assert(br(-3, 4).to_str() == "-3/4")
+    assert(br(0, 1).to_str() == "0")
+    ro s = "123456789/987654321"
+    assert(s.to_bigrat()!!.to_str() == s)
+}
+
+test "Ф.4: @to_int / @to_i128 — trunc-к-нулю, None при переполнении" {
+    assert(br(7, 2).to_int() == Some(3))
+    assert(br(-7, 2).to_int() == Some(-3))
+    assert(br(4, 2).to_int() == Some(2))
+    assert(br(1, 2).to_int() == Some(0))
+    assert(br(-1, 2).to_int() == Some(0))
+    assert(br(7, 2).to_i128() == Some(i128(0, 3)))
+
+    ro big = BigRat.new((1).to_bigint().shl(63), (1).to_bigint())!!
+    assert(big.to_int() == None)
+    ro huge = BigRat.new((1).to_bigint().shl(127), (1).to_bigint())!!
+    assert(huge.to_i128() == None)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ф.4: связка семьи — BigDecimal↔BigRat, BigFloat→BigRat
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.4: BigDecimal @to_bigrat — точная конверсия и нормализация" {
+    ro r = "1.25".to_bigdecimal()!!.to_bigrat()
+    assert(r.equal(br(5, 4)))
+    ro big = "12.345".to_bigdecimal()!!.to_bigrat()
+    assert(big.equal(BigRat.new((2469).to_bigint(), (200).to_bigint())!!))
+    ro whole = "5".to_bigdecimal()!!.to_bigrat()
+    assert(whole.equal(br(5, 1)))
+    ro negscale = "1.5E+2".to_bigdecimal()!!.to_bigrat()
+    assert(negscale.equal(br(150, 1)))
+    ro z = "0.0".to_bigdecimal()!!.to_bigrat()
+    assert(z.is_zero())
+}
+
+test "Ф.4: BigRat @to_bigdecimal(mc) — деление с округлением" {
+    ro q = br(5, 4).to_bigdecimal(MathContext.new(10, HalfEven))
+    assert(q.equal("1.25".to_bigdecimal()!!))
+    ro third = br(1, 3).to_bigdecimal(MathContext.new(4, HalfEven))
+    assert(third.equal("0.3333".to_bigdecimal()!!))
+    ro two_thirds = br(2, 3).to_bigdecimal(MathContext.new(10, HalfEven))
+    assert(two_thirds.equal("0.6666666667".to_bigdecimal()!!))
+}
+
+test "Ф.4: BigFloat @to_bigrat — точная конверсия" {
+    ro a = BigFloat.new((3).to_bigint(), 1).to_bigrat()
+    assert(a.equal(br(6, 1)))
+    ro b = BigFloat.new((1).to_bigint(), -2).to_bigrat()
+    assert(b.equal(br(1, 4)))
+    ro c = BigFloat.new((-3).to_bigint(), 1).to_bigrat()
+    assert(c.equal(br(-6, 1)))
+    ro d = BigFloat.new((5).to_bigint(), -1).to_bigrat()
+    assert(d.equal(br(5, 2)))
+    ro z = BigFloat.new((0).to_bigint(), 99).to_bigrat()
+    assert(z.is_zero())
 }

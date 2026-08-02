@@ -207,3 +207,160 @@ PASS: 8  FAIL: 0  SKIP: 3          # PASS 8 = 6 канонных + bigrat_test +
 Блокер снят владельцем; компилятор чинить не пришлось (фикс в реестре nova). Ф.1–Ф.6
 продолжаются строго по плану 240. Репро-файлы `src/repro_test.nv` / `src/repro_direct_test.nv`
 после закрытия дефекта НЕ нужны — удаляются в Ф.6 перед приёмкой.
+
+---
+
+# СТОП-репорт — План 240 (BigRat V1), фаза Ф.4
+
+Дата: 2026-08-02. Фазы Ф.1–Ф.3 закрыты (коммиты `9ee5aef`, `0df67a5`, `68ef71a`),
+Ф.4 (строки и связка семьи) заблокирована дефектом кодогенератора.
+
+## Хеш компилятора (тот же, что на Ф.0-резюме)
+
+```
+sha256: 017a24989c1c2c04862e32bc11bab341e2dfe9cebf547c0cbc20e1459063a006
+```
+
+## Симптом
+
+```
+$ nova test src/bigrat_test.nv
+RUN-FAIL src/bigrat_test
+  # FAIL: Ф.4: str @to_bigrat — ошибки парсинга — bigrat_test.nv:308: assert failed: false
+  # FAIL: Ф.4: @to_str — p/q, целые без знаменателя, roundtrip — bigrat_test.nv:330: assert failed: false
+```
+
+Падают только тесты, которые матчат варианты `ParseBigRatError` (общие имена `Empty`/
+`OnlySign`/`InvalidCharacter`). Тесты, возвращающие `Ok`-значения (`p/q`, целые формы),
+проходят.
+
+## Корневая причина (дефект codegen компилятора)
+
+Вложенный паттерн `Err(Variant)` по `Result[_, E]` эмитится в C с тегом **не того**
+enum'а: вариант разрешается по имени без учёта типа ошибки `E` результата. Когда
+несколько enum'ов в юните/скоупе объявляют варианты с одним именем, кодогенератор берёт
+«первый попавшийся» enum, а не `E`.
+
+Конкретика (enum-теги в сгенерированном C):
+
+| вариант | `ParseBigIntError` (тег) | `ParseBigRatError` (тег) |
+|---|---|---|
+| `Empty` | 0 | 0 |
+| `OnlySign` | **2** | **1** |
+| `InvalidCharacter` | **1** | **2** |
+
+Пример, `src/repro_parse_test.c:14993` (паттерн `Err(OnlySign)` на
+`Result[BigRat, ParseBigRatError]`):
+
+```c
+if (!_nv_matched_1868 && ((_nv_scr_1866->tag == NOVA_TAG_Result_Err) &&
+    (_nv_scr_1866->payload.Err._0->tag == NOVA_TAG_ParseBigIntError_OnlySign))) ...
+//                                                                  ^^^^^^^^^^^^^^^^^^
+//      должен быть NOVA_TAG_ParseBigRatError_OnlySign (тег 1), а не ParseBigIntError (тег 2)
+```
+
+А значение, которое реально строит библиотека, — `ParseBigRatError.OnlySign` (тег 1):
+`map_parse_int_err` (плоский match по `ParseBigIntError` со скрутини-типом, результат
+типизирован как `ParseBigRatError`) разрешает ветки ПРАВИЛЬНО
+(`repro_parse_test.c:12954-12962`: `nova_make_ParseBigRatError_*`). Тег 2 != тег 1 →
+матч не срабатывает → `assert(false)`.
+
+Почему тесты Ф.4 проходили до этого: `Empty`/`OnlySign`/`InvalidCharacter` в
+`bigfloat`/`bigdecimal` строятся и матчатся **одинаково неверно** (обе стороны берут
+`ParseBigIntError`/`Slot`), теги согласованы → зелёные. Например:
+- `bigfloat_test.c:14725` — матч `Err(OnlySign)` на `ParseBigFloatError` тоже проверяет
+  `NOVA_TAG_ParseBigIntError_OnlySign`;
+- `bigfloat.nv` (маппинг ошибок, сген. `repro_parse_test.c:13543/13623/13630/...`) —
+  конструкция `OnlySign => OnlySign` даёт `nova_make_ParseBigIntError_OnlySign()`.
+
+В BigRat корректный плоский match-хелпер (`map_parse_int_err`) впервые развёл стороны:
+значения строятся с тегами `ParseBigRatError`, а паттерны матчатся с тегами
+`ParseBigIntError` → рассинхрон вскрыт.
+
+Дополнительно дефект затронул и библиотеку: `return Err(Empty)` в `str @to_bigrat`
+(bigrat.nv:211) эмитится как `Err(nova_make_Slot_Empty())` — enum `Slot`, а не
+`ParseBigRatError` (спасает только совпадение тегов 0 == 0). `Err(ZeroDenominator)`
+корректен — имя уникально.
+
+**Вердикт по корню:** это дефект кодогенератора в разрешении вариантов enum'а при
+вложенных `Err(Variant)`-паттернах и `Err(...)`-конструкции (игнорируется тип ошибки
+Result; общие имена вариантов разрешаются в произвольный enum). Не ошибка в коде BigRat
+и не нарушение пина Ф.4. По правилам BRIEF: компилятор не чинить, молча не обходить →
+СТОП.
+
+## Минимальное репро
+
+Самодостаточно, `src/repro_parse_test.nv` (не зависит от BigInt-семантики):
+
+```nova
+module bigint.repro_parse_test
+
+import bigint.bigrat.{BigRat, ParseBigRatError, Empty, OnlySign, InvalidCharacter, ZeroDenominator}
+import bigint.bigfloat.{BigFloat}
+import bigint.{ParseBigIntError}
+
+fn map_err(e ParseBigIntError) -> ParseBigRatError {
+    match e {
+        Empty => Empty
+        OnlySign => OnlySign
+        InvalidCharacter => InvalidCharacter
+    }
+}
+
+fn parse(s str) -> Result[BigRat, ParseBigRatError] {
+    ro n = s.to_bigint()
+    match n {
+        Ok(v) => Ok(BigRat.new(v, BigRat.one().den())!!)
+        Err(e) => Err(map_err(e))
+    }
+}
+
+test "repro: nested Err(OnlySign) pattern on ParseBigRatError" {
+    match parse("-") {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "repro: nested Err(InvalidCharacter) pattern on ParseBigRatError" {
+    match parse("a") {
+        Err(InvalidCharacter) => assert(true)
+        _ => assert(false)
+    }
+}
+```
+
+Прогон:
+
+```
+$ nova test src/repro_parse_test.nv
+RUN-FAIL src/repro_parse_test
+  # FAIL: repro: nested Err(OnlySign) pattern on ParseBigRatError — repro_parse_test.nv:26
+  # FAIL: repro: nested Err(InvalidCharacter) pattern on ParseBigRatError — repro_parse_test.nv:33
+```
+
+Контроль: вариант с УНИКАЛЬНЫМ именем (`Err(ZeroDenominator)` на `ParseBigRatError`,
+`Err(DivisionByZero)` на `DivError`) матчится корректно — подтверждено на
+`bigrat_test.nv` (тесты Ф.3 зелёные) и `map_err`/`Empty` сходятся только совпадением
+тегов 0.
+
+## Что сделано в Ф.4 до СТОП
+
+- `src/bigrat.nv`: `map_parse_int_err`, `str @to_bigrat()` (парсинг `p/q`, `den==0` →
+  `ZeroDenominator`), `BigRat @to_str()`, `BigRat @to_int()`, `BigRat @to_i128()`,
+  `BigDecimal @to_bigrat()`, `BigRat @to_bigdecimal(mc)`, `BigFloat @to_bigrat()`;
+  статический `check` — без warning'ов.
+- `src/bigrat_test.nv`: тесты Ф.4 (импорты вариантов `ParseBigRatError`, связка
+  `BigDecimal`/`BigFloat`). `nova check src --strict-effects` = **PASS 11 / 0 / 24**.
+- `src/repro_parse_test.nv` — минимальное репро. `src/diag_test.nv` — диагностический
+  черновик, УДАЛЁН (не входит в репро).
+
+## Вердикт
+
+1. **Пин Ф.4 (строки, матч вариантов `ParseBigRatError`) — КРАСНЫЙ** по дефекту
+   компилятора (вложенные `Err(Variant)`-паттерны с общими именами вариантов эмитят
+   теги чужого enum'а). Ф.1–Ф.3 зелёные, `check` зелёный, `test src` с падающими Ф.4.
+2. **Решение: СТОП.** Ф.5 и Ф.6 не начинать до решения владельца по дефекту
+   кодогенератора (фикс компилятора или санкционированный обход). Репро-файл
+   `src/repro_parse_test.nv` оставлен в дереве как доказательство; после закрытия
+   дефекта удаляется в Ф.6 вместе с `repro_test.nv`/`repro_direct_test.nv`.

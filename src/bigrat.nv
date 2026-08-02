@@ -10,9 +10,11 @@
 
 module bigint.bigrat
 
-import bigint.{BigInt, DivError, DivisionByZero}
+import bigint.{BigInt, DivError, DivisionByZero, ParseBigIntError}
+import bigint.bigdecimal.{BigDecimal, MathContext}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}
+import std.runtime.string_builder.{StringBuilder}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
@@ -187,4 +189,114 @@ export fn BigRat @recip() -> Result[BigRat, DivError] {
 export fn BigRat @div(other BigRat) -> Result[BigRat, DivError] {
     if other.is_zero() { return Err(DivisionByZero) }
     Ok(normalize_rat(@num * other.den, @den * other.num))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Строки (§2 плана 240)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn map_parse_int_err(e ParseBigIntError) -> ParseBigRatError {
+    match e {
+        Empty => Empty
+        OnlySign => OnlySign
+        InvalidCharacter => InvalidCharacter
+    }
+}
+
+/// Разобрать `"p/q"` или целое `"n"` (знак живёт у p). ДЕЛЕГАЦИЕЙ: части парсит
+/// `str @to_bigint()`, его ошибки маппятся; `den == 0` → `ZeroDenominator`.
+#stable(since = "0.1")
+export fn str @to_bigrat() -> Result[BigRat, ParseBigRatError] {
+    ro len = @byte_len()
+    if len == 0 { return Err(Empty) }
+    ro bytes = @bytes()
+    mut slash = -1
+    for i in 0..len {
+        if bytes[i] == ('/' as u8) { slash = i; break }
+    }
+    if slash < 0 {
+        ro n = @to_bigint()
+        return match n {
+            Ok(bi) => Ok(if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } })
+            Err(e) => Err(map_parse_int_err(e))
+        }
+    }
+    consume num_sb = StringBuilder.new()
+    num_sb.append(bytes[..slash])
+    ro num_s = num_sb.into_str()
+    consume den_sb = StringBuilder.new()
+    den_sb.append(bytes[slash + 1..])
+    ro den_s = den_sb.into_str()
+    ro num = match num_s.to_bigint() {
+        Ok(v) => v
+        Err(e) => return Err(map_parse_int_err(e))
+    }
+    ro den = match den_s.to_bigint() {
+        Ok(v) => v
+        Err(e) => return Err(map_parse_int_err(e))
+    }
+    if den.is_zero() { return Err(ZeroDenominator) }
+    Ok(normalize_rat(num, den))
+}
+
+/// `"p/q"`; целые (den == 1) — просто `"p"`.
+#stable(since = "0.1")
+export fn BigRat @to_str() -> str {
+    if @den.is_one() { return @num.to_str() }
+    consume sb = StringBuilder.new()
+    sb.append(@num.to_str())
+    sb.append("/")
+    sb.append(@den.to_str())
+    sb.into_str()
+}
+
+/// В `int` trunc-к-нулю (паритет int-деления). `None` при переполнении приёмника.
+#stable(since = "0.1")
+export fn BigRat @to_int() -> Option[int] {
+    ro q = @num.div(@den) ?? panic("to_int: den != 0 guaranteed by normal form")
+    q.to_int()
+}
+
+/// В `i128` trunc-к-нулю (паритет int-деления). `None` при переполнении приёмника.
+#stable(since = "0.1")
+export fn BigRat @to_i128() -> Option[i128] {
+    ro q = @num.div(@den) ?? panic("to_i128: den != 0 guaranteed by normal form")
+    q.to_i128()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Связка семьи (обе сестры — мотив «точный эталон» требует обеих)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `BigDecimal` → `BigRat` ТОЧНО: `mant / 10^{scale}` → нормальная форма.
+/// Отрицательный scale (целое с неявными нулями) — умножение на `10^{|scale|}`.
+#stable(since = "0.1")
+export fn BigDecimal @to_bigrat() -> BigRat {
+    if @mant.is_zero() { return BigRat.zero() }
+    if @scale > 0 {
+        normalize_rat(@mant, (10).to_bigint().pow(@scale as uint))
+    } else if @scale < 0 {
+        { num: @mant * (10).to_bigint().pow((-@scale) as uint), den: BigInt.one() }
+    } else {
+        { num: @mant, den: BigInt.one() }
+    }
+}
+
+/// `BigRat` → `BigDecimal` делением `num/den` с округлением `mc` (первый носитель
+/// «BigRat как эталон» в тестах 236). Делегируется `BigDecimal @div`.
+#stable(since = "0.1")
+export fn BigRat @to_bigdecimal(mc MathContext) -> BigDecimal {
+    BigDecimal.new(@num, 0).div(BigDecimal.new(@den, 0), mc)
+}
+
+/// `BigFloat` → `BigRat` ТОЧНО: `mant × 2^{exp}`. exp ≥ 0 → `num = mant.shl(exp)`;
+/// exp < 0 → `den = 1.shl(-exp)` (мантисса BigFloat нечётна → НОД с 2^k = 1).
+#stable(since = "0.1")
+export fn BigFloat @to_bigrat() -> BigRat {
+    if @mant.is_zero() { return BigRat.zero() }
+    if @exp >= 0 {
+        { num: @mant.shl(@exp), den: BigInt.one() }
+    } else {
+        normalize_rat(@mant, BigInt.one().shl(-@exp))
+    }
 }
