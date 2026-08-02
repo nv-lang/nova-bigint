@@ -227,14 +227,8 @@ export fn str @to_bigrat() -> Result[BigRat, ParseBigRatError] {
     consume den_sb = StringBuilder.new()
     den_sb.append(bytes[slash + 1..])
     ro den_s = den_sb.into_str()
-    ro num = match num_s.to_bigint() {
-        Ok(v) => v
-        Err(e) => return Err(map_parse_int_err(e))
-    }
-    ro den = match den_s.to_bigint() {
-        Ok(v) => v
-        Err(e) => return Err(map_parse_int_err(e))
-    }
+    ro num = num_s.to_bigint().map_err(map_parse_int_err)?
+    ro den = den_s.to_bigint().map_err(map_parse_int_err)?
     if den.is_zero() { return Err(ZeroDenominator) }
     Ok(normalize_rat(num, den))
 }
@@ -247,7 +241,7 @@ export fn BigRat @to_str() -> str {
     sb.append(@num.to_str())
     sb.append("/")
     sb.append(@den.to_str())
-    sb.into_str()
+    sb  // голое значение коэрсится в str (#coerce finalize, D429 R9) — явный into_str избыточен
 }
 
 /// В `int` trunc-к-нулю (паритет int-деления). `None` при переполнении приёмника.
