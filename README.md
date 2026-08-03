@@ -1,6 +1,6 @@
-# nova-bigint
+# nova-bignum
 
-Целые произвольной точности (BigInt) на чистом Nova — аналог Python `int` / Rust `num-bigint` / Go `math/big`.
+Числа произвольной точности (BigInt/BigRat/BigDecimal/BigFloat) на чистом Nova — аналог Python `int`/`decimal`/`fractions`, Rust `num-bigint`/`num-rational`, Go `math/big`.
 
 ## Возможности (V1)
 
@@ -11,11 +11,11 @@
 - **Конверсии:**
   - `T @to_bigint()` — любой `Ints` (`i8`..`i64`, `u8`..`u64`)
   - `i128 @to_bigint()` — библиотечный 128-битный тип
-  - `str @to_bigint()` — десятичная строка → `Result[BigInt, ParseBigIntError]`
+  - `str @to_bigint()` — десятичная строка → `Result[BigInt, ParseNumberError]`
   - `BigInt @to_int()` → `Option[int]`
   - `BigInt @to_i128()` → `Option[i128]`
   - `BigInt @to_str()` → десятичная строка
-- **Ошибки — значениями:** деление на ноль → `Err(DivisionByZero)`, разбор строки → `Err(ParseBigIntError)` с категорией (`Empty`, `InvalidCharacter`, `OnlySign`). `panic` только на внутренние инварианты.
+- **Ошибки — значениями:** деление на ноль → `Err(DivisionByZero)`, разбор строки → `Err(ParseNumberError)` с категорией (`Empty`, `InvalidCharacter`, `OnlySign`, ...). Один `ParseNumberError` на весь пакет — общий для BigInt/BigRat/BigDecimal/BigFloat (план 243 Ф.U/У.1). `panic` только на внутренние инварианты.
 
 ## Чего НЕТ в V1
 
@@ -40,7 +40,7 @@
   `MathContext { precision int, rm RoundingMode }`, `@round(ctx)` (значащие цифры),
   `@rescale(target, rm)` (десятичные знаки; `target < 0` — округление до `10^|target|`).
 - **Конверсии:** `T @to_bigdecimal()` (все члены `Ints` + `i128`), `str @to_bigdecimal()
-  -> Result[BigDecimal, ParseBigDecimalError]`, `@to_str(scale_pad = 0)`, `@to_int()`/
+  -> Result[BigDecimal, ParseNumberError]`, `@to_str(scale_pad = 0)`, `@to_int()`/
   `@to_i128() -> Option[...]`.
 - **Нормализация:** `@normalize()` — убирает конечные нули мантиссы; **lazy** — не
   вызывается в конструкторах/операциях, только в `@equal`/`@hash`/явно.
@@ -53,7 +53,7 @@
 неявные коэрсии/литералы, кэш малых степеней 10, Toom-Cook.
 
 ```nova
-import bigint.bigdecimal.{BigDecimal, MathContext, HalfEven}
+import bignum.bigdecimal.{BigDecimal, MathContext, HalfEven}
 
 ro price = "19.99".to_bigdecimal()!!
 ro tax = "0.01".to_bigdecimal()!!
@@ -75,7 +75,7 @@ assert(third.to_str() == "0.3333")
   (нормальная форма).
 - **Конверсии:** `T @to_bigfloat(ctx)` (все `Ints` + `i128` — точные; `f64` —
   точная, без ctx; `str` — десятичная и `0b`-двоичная →
-  `Result[BigFloat, ParseBigFloatError]`), `@to_f64()`/`@to_int()`/`@to_i64()`/
+  `Result[BigFloat, ParseNumberError]`), `@to_f64()`/`@to_int()`/`@to_i64()`/
   `@to_u64() -> Option[...]`, `@to_bigint()` (trunc), `@to_str(frac_digits = 6)`,
   пара `BigDecimal <-> BigFloat` (через ctx).
 - Деление/`sqrt` на нуле — panic (паритет `int`, D423).
@@ -94,7 +94,7 @@ assert(third.to_str() == "0.3333")
   `@compare`/`@equal`/`@hash`.
 - **Конверсии:** `T @to_bigrat()` (все `Ints` + `i128` — точные),
   `str @to_bigrat()` (формы `"3/4"`, `"-12"`, десятичная `"1.25"`) →
-  `Result[BigRat, ParseBigRatError]`, `@to_str()` (`"num/den"` или целое),
+  `Result[BigRat, ParseNumberError]`, `@to_str()` (`"num/den"` или целое),
   `@to_int() -> Option[int]`; мосты: `BigDecimal @to_bigrat()` (точный),
   `BigRat @to_bigdecimal(mc)` (округление по `MathContext`),
   `BigFloat @to_bigrat()` (точный).
@@ -131,11 +131,11 @@ type BigInt value {
 
 ```toml
 [dependencies]
-bigint = { git = "https://github.com/nv-lang/nova-bigint", version = "0.1" }
+bignum = { git = "https://github.com/nv-lang/nova-bigint", version = "0.1" }
 ```
 
 ```nova
-import bigint.{BigInt, Sign, ParseBigIntError, DivError}
+import bignum.{BigInt, Sign, ParseNumberError, DivError}
 
 let a = 42.to_bigint()
 let b = "12345678901234567890".to_bigint()!!

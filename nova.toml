@@ -1,23 +1,28 @@
-# nova.toml — nova-bigint: целые произвольной точности (BigInt) на чистом Nova.
+# nova.toml — nova-bignum: числа произвольной точности (BigInt/BigRat/BigDecimal/
+# BigFloat) на чистом Nova.
 #
 # План 235 (`docs/plans/235-bigint.md` в репе nova). Решение владельца 2026-07-29:
 # BigInt живёт ОТДЕЛЬНЫМ ПАКЕТОМ В СВОЕЙ РЕПЕ, а не в `std`. Причина: ядро языка
 # остаётся fixed-width с trap-политикой (D423), а произвольная точность — это
-# подключаемая зависимость, а не часть обязательной поставки std.
+# подключаемая зависимость, а не часть обязательной поставки std. Пакет
+# переименован из `bigint` в `bignum` планом 243 Ф.U/У.3 (решение владельца
+# 2026-08-03) — семья выросла за пределы одного члена (BigInt/BigRat/
+# BigDecimal/BigFloat), новое имя описывает весь класс, ничего лишнего не
+# обещает (в отличие от `math`) и узнаваемо рядом с Go `math/big`.
 #
 # Раскладка — как у nova-tls / nova-compress / nova-polaris: канон `src/`, корень
 # исходников задаётся ключом `[lib] src`, поэтому пути модулей резолвятся
 # ОТНОСИТЕЛЬНО `src/` (D78 — путь модуля НЕ включает `src`). Вся поверхность
-# пакета — корневые peers: `src/bigint.nv` -> `module bigint`.
+# пакета — корневые peers: `src/bignum.nv` -> `module bignum`.
 #
 # Native-артефактов НЕТ и не планируется: bignum — переносимая чистая арифметика,
 # ровно тот класс кода, что обязан жить в `.nv` (никакого GMP/libtommath —
 # лицензии и линковка того не стоят, эталон — Go `math/big`, чистый Go).
 
 [package]
-name = "bigint"
+name = "bignum"
 version = "0.1.0"
-description = "Целые произвольной точности (BigInt) на чистом Nova — знак + limbs u32, без C-зависимостей"
+description = "Числа произвольной точности (BigInt/BigRat/BigDecimal/BigFloat) на чистом Nova — знак + limbs u32, без C-зависимостей"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nv-lang/nova-bigint"
 

@@ -1,5 +1,5 @@
 // Точные рациональные числа: num / den над BigInt.
-// Поверх BigInt (bigint.nv, план 235). План: docs/plans/240-bigrat.md
+// Поверх BigInt (bignum.nv, план 235). План: docs/plans/240-bigrat.md
 // в репе nova. Своей арифметики лимбов нет — вся арифметика через BigInt.
 //
 // Value-record: копия = два BigInt (heap-указатели). Нормальная форма
@@ -8,10 +8,10 @@
 // в отличие от lazy-нормализации BigDecimal: для рациональных сокращение —
 // защита от взрыва num/den по цепочке операций, не косметика.
 
-module bigint.bigrat
+module bignum.bigrat
 
-import bigint.{BigInt, DivError, DivisionByZero, ParseBigIntError}
-import bigint.bigdecimal.{BigDecimal, MathContext}
+import bignum.{BigInt, DivError, DivisionByZero, ParseNumberError, Sign, Neg, Zero, Pos, Empty, ZeroDenominator}
+import bignum.bigdecimal.{BigDecimal, MathContext}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}
 import std.runtime.string_builder.{StringBuilder}
@@ -19,14 +19,6 @@ import std.runtime.string_builder.{StringBuilder}
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Ошибка разбора строки `"p/q"` или `"n"` в BigRat.
-#stable(since = "0.1")
-export type ParseBigRatError enum
-    | Empty
-    | OnlySign
-    | InvalidCharacter
-    | ZeroDenominator
 
 /// Точное рациональное число: значение = `num / den`.
 /// Инвариант нормальной формы (поддерживается каждой операцией):
@@ -84,10 +76,10 @@ export fn BigRat @is_zero() -> bool => @num.is_zero()
 #stable(since = "0.1")
 export fn BigRat @is_int() -> bool => @den.is_one()
 
-/// Sign of the value: -1 / 0 / 1. Denominator is positive, so the sign lives in the numerator.
+/// Sign of the value. Denominator is positive, so the sign lives in the numerator.
 #stable(since = "0.1")
-export fn BigRat @sign() -> int {
-    if @num.is_neg() { -1 } else if @num.is_zero() { 0 } else { 1 }
+export fn BigRat @sign() -> Sign {
+    if @num.is_neg() { Neg } else if @num.is_zero() { Zero } else { Pos }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -195,18 +187,11 @@ export fn BigRat @div(other BigRat) -> Result[BigRat, DivError] {
 // Строки (§2 плана 240)
 // ──────────────────────────────────────────────────────────────────────────
 
-fn map_parse_int_err(e ParseBigIntError) -> ParseBigRatError {
-    match e {
-        Empty => Empty
-        OnlySign => OnlySign
-        InvalidCharacter => InvalidCharacter
-    }
-}
-
-/// Разобрать `"p/q"` или целое `"n"` (знак живёт у p). ДЕЛЕГАЦИЕЙ: части парсит
-/// `str @to_bigint()`, его ошибки маппятся; `den == 0` → `ZeroDenominator`.
+/// Parse `"p/q"` or a plain integer `"n"` (sign lives on p). Delegates to
+/// `str @to_bigint()` for both parts — same `ParseNumberError`, no adapter
+/// needed; `den == 0` → `ZeroDenominator`.
 #stable(since = "0.1")
-export fn str @to_bigrat() -> Result[BigRat, ParseBigRatError] {
+export fn str @to_bigrat() -> Result[BigRat, ParseNumberError] {
     ro len = @byte_len()
     if len == 0 { return Err(Empty) }
     ro bytes = @bytes()
@@ -218,7 +203,7 @@ export fn str @to_bigrat() -> Result[BigRat, ParseBigRatError] {
         ro n = @to_bigint()
         return match n {
             Ok(bi) => Ok(if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } })
-            Err(e) => Err(map_parse_int_err(e))
+            Err(e) => Err(e)
         }
     }
     consume num_sb = StringBuilder.new()
@@ -227,8 +212,8 @@ export fn str @to_bigrat() -> Result[BigRat, ParseBigRatError] {
     consume den_sb = StringBuilder.new()
     den_sb.append(bytes[slash + 1..])
     ro den_s = den_sb.into_str()
-    ro num = num_s.to_bigint().map_err(map_parse_int_err)?
-    ro den = den_s.to_bigint().map_err(map_parse_int_err)?
+    ro num = num_s.to_bigint()?
+    ro den = den_s.to_bigint()?
     if den.is_zero() { return Err(ZeroDenominator) }
     Ok(normalize_rat(num, den))
 }

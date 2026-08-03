@@ -4,11 +4,11 @@
 // `nova test src --include-slow`. В репо хранится как часть пакета:
 // `nova check src` его проверяет, `nova lint` — линтует.
 
-module bigint.bigrat_slow
+module bignum.bigrat_slow
 
-import bigint.{BigInt}
-import bigint.bigrat.{BigRat}
-import bigint.bigfloat.{BigFloat}
+import bignum.{BigInt}
+import bignum.bigrat.{BigRat}
+import bignum.bigfloat.{BigFloat}
 
 fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
 

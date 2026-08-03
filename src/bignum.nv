@@ -3,7 +3,7 @@
 // (little-endian, без ведущих нулей).
 // Ноль = Zero + пустые limbs (каноничен, единственное представление).
 
-module bigint
+module bignum
 
 import std.math.int128.{i128}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
@@ -17,12 +17,11 @@ import std.runtime.string_builder.{StringBuilder}
 #stable(since = "0.1")
 export type Sign enum Neg | Zero | Pos
 
-/// Ошибка разбора десятичной строки в BigInt.
+/// Error parsing a numeric string into any bignum family type (BigInt,
+/// BigRat, BigDecimal, BigFloat) — one shared enum across the whole
+/// parsing surface, no per-type variant or adapter (plan 243 Ф.U/У.1).
 #stable(since = "0.1")
-export type ParseBigIntError enum
-    | Empty
-    | InvalidCharacter
-    | OnlySign
+export type ParseNumberError enum Empty | OnlySign | InvalidCharacter | MultiplePoints | MultipleExponents | EmptyExponent | EmptyMantissa | ZeroDenominator
 
 /// Ошибка деления на ноль.
 #stable(since = "0.1")
@@ -445,9 +444,9 @@ export fn i128 @to_bigint() -> BigInt {
     { sign: if negative { Neg } else { Pos }, limbs }
 }
 
-/// Десятичная строка → `Result[BigInt, ParseBigIntError]`.
+/// Десятичная строка → `Result[BigInt, ParseNumberError]`.
 #stable(since = "0.1")
-export fn str @to_bigint() -> Result[BigInt, ParseBigIntError] {
+export fn str @to_bigint() -> Result[BigInt, ParseNumberError] {
     ro len = @len()
     if len == 0 { return Err(Empty) }
     ro bytes = @bytes()

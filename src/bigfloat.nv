@@ -1,15 +1,15 @@
 // Двоичное число произвольной точности: mant × 2^{exp}.
-// Поверх BigInt (bigint.nv, план 235). План: docs/plans/237-bigfloat.md
+// Поверх BigInt (bignum.nv, план 235). План: docs/plans/237-bigfloat.md
 // в репе nova. Вся арифметика — BigInt-свёртки с постраундом.
 //
 // Value-record: копия = BigInt-мантисса (heap-указатель) + exp (8 байт).
 // Нормализация LAZY — не вызывается в конструкторах/операциях, только
 // в @equal/@hash и явном normalize().
 
-module bigint.bigfloat
+module bignum.bigfloat
 
-import bigint.{BigInt, Sign, Neg, Zero, Pos}
-import bigint.bigdecimal.{RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, BigDecimal}
+import bignum.{BigInt, Sign, Neg, Zero, Pos, ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, EmptyExponent, EmptyMantissa}
+import bignum.bigdecimal.{RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, BigDecimal}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}
 
@@ -19,17 +19,6 @@ const GUARD = 3
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Error parsing a string (decimal or binary) into a BigFloat.
-#stable(since = "0.1")
-export type ParseBigFloatError enum
-    | Empty
-    | OnlySign
-    | InvalidCharacter
-    | MultiplePoints
-    | MultipleExponents
-    | EmptyExponent
-    | EmptyMantissa
 
 /// Context: precision (SIGNIFICANT BITS of the mantissa, ≥ 2) + rounding mode.
 /// Analogous to the BigDecimal MathContext, but prec is in bits, not decimal digits.
@@ -59,10 +48,6 @@ export type BigFloat value {
 // ──────────────────────────────────────────────────────────────────────────
 // Приватные хелперы
 // ──────────────────────────────────────────────────────────────────────────
-
-fn sign_num(b BigInt) -> int {
-    if b.is_zero() { 0 } else if b.is_neg() { -1 } else { 1 }
-}
 
 fn apply_sign(m BigInt, s Sign) -> BigInt {
     match s {
@@ -256,7 +241,7 @@ export fn f64 @to_bigfloat() -> BigFloat {
 /// Binary format:  `[sign] '0b' bin-digits ['.' bin-frac] 'p' [sign] digits`.
 /// No `bf` suffix — the binary format is detected by the `0b` prefix.
 #stable(since = "0.1")
-export fn str @to_bigfloat(ctx PrecisionContext) -> Result[BigFloat, ParseBigFloatError] {
+export fn str @to_bigfloat(ctx PrecisionContext) -> Result[BigFloat, ParseNumberError] {
     ro len = @byte_len()
     if len == 0 { return Err(Empty) }
     ro bytes = @bytes()
@@ -269,26 +254,16 @@ export fn str @to_bigfloat(ctx PrecisionContext) -> Result[BigFloat, ParseBigFlo
         return parse_binary_str(@, ctx)
     }
     // Десятичный: парсим как BigDecimal, затем конвертируем в BigFloat.
+    // Same ParseNumberError on both sides — no adapter needed (plan 243 Ф.U/У.1).
     ro bd_res = @to_bigdecimal()
     match bd_res {
         Ok(bd) => Ok(bd.to_bigfloat(ctx))
-        Err(e) => {
-            ro mapped = match e {
-                Empty => Empty
-                OnlySign => OnlySign
-                InvalidCharacter => InvalidCharacter
-                MultiplePoints => MultiplePoints
-                MultipleExponents => MultipleExponents
-                EmptyExponent => EmptyExponent
-                EmptyMantissa => EmptyMantissa
-            }
-            Err(mapped)
-        }
+        Err(e) => Err(e)
     }
 }
 
 /// Parse a binary string `0b...p...`.
-fn parse_binary_str(s str, ctx PrecisionContext) -> Result[BigFloat, ParseBigFloatError] {
+fn parse_binary_str(s str, ctx PrecisionContext) -> Result[BigFloat, ParseNumberError] {
     ro bytes = s.bytes()
     ro len = s.byte_len()
     mut i = 0

@@ -2,17 +2,17 @@
 // План 240 (docs/plans/240-bigrat.md в репе nova).
 // Ф.0: пины компилябельности — (а) value-record с двумя BigInt-полями,
 // (а2) статик-конструкторы + instance-метод на одном value-record типе,
-// (б) операторный desugar + - *, (в) кросс-модульный DivError из bigint,
+// (б) операторный desugar + - *, (в) кросс-модульный DivError из bignum,
 // (г) бланкет `fn[T Ints] T @to_bigrat()` → `@to_bigint()` в пакетном CU.
 
-module bigint.bigrat_test
+module bignum.bigrat_test
 
-import bigint.{BigInt}
+import bignum.{BigInt, Neg, Zero, Pos}
 import std.math.int128.{i128}
 import std.prelude.core.{Option, Some, None}
-import bigint.bigrat.{BigRat, ParseBigRatError, Empty, OnlySign, InvalidCharacter, ZeroDenominator}
-import bigint.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
-import bigint.bigfloat.{BigFloat, PrecisionContext}
+import bignum.bigrat.{BigRat}
+import bignum.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
+import bignum.bigfloat.{BigFloat, PrecisionContext}
 
 fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
 
@@ -59,7 +59,7 @@ test "Ф.0(a2): new нормализует знак — -1/-2 == 1/2, 0/5 == 0/1
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Ф.0 пин (в): DivError виден в bigint.bigrat (кросс-модульный импорт)
+// Ф.0 пин (в): DivError виден в bignum.bigrat (кросс-модульный импорт)
 // ──────────────────────────────────────────────────────────────────────────
 
 test "Ф.0(b): new(x, 0) → Err(DivisionByZero)" {
@@ -144,19 +144,19 @@ test "Ф.2: @is_zero / @is_int / @sign" {
     ro z = BigRat.zero()
     assert(z.is_zero())
     assert(z.is_int())
-    assert(z.sign() == 0)
+    assert(z.sign() == Zero)
 
     ro h = br(1, 2)
     assert(!h.is_zero())
     assert(!h.is_int())
-    assert(h.sign() == 1)
+    assert(h.sign() == Pos)
 
     ro neg = br(-3, 5)
-    assert(neg.sign() == -1)
+    assert(neg.sign() == Neg)
 
     ro five = br(5, 1)
     assert(five.is_int())
-    assert(five.sign() == 1)
+    assert(five.sign() == Pos)
 }
 
 test "Ф.2: @abs" {
@@ -551,7 +551,7 @@ fn rat_dec_exp(num BigInt, den BigInt) -> int {
 /// Ручное округление точной дроби q до p значащих десятичных цифр, HalfEven.
 /// Значение = mant × 10^{-t}.
 fn manual_round_half_even_dec(q BigRat, p int) -> BigDecimal {
-    ro neg = q.sign() < 0
+    ro neg = q.sign() == Neg
     ro n = q.num().abs()
     ro d = q.den()
     if n.is_zero() { return BigDecimal.new(BigInt.zero(), 0) }
@@ -591,7 +591,7 @@ fn rat_bit_exp(num BigInt, den BigInt) -> int {
 /// Ручное округление точной дроби q до prec значащих БИТ, HalfEven.
 /// Значение = mant × 2^{exp}.
 fn manual_round_half_even_bin(q BigRat, prec int) -> BigFloat {
-    ro neg = q.sign() < 0
+    ro neg = q.sign() == Neg
     ro n = q.num().abs()
     ro d = q.den()
     if n.is_zero() { return BigFloat.zero() }

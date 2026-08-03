@@ -1,5 +1,5 @@
 // Десятичное число произвольной точности: mantissa × 10^{-scale}.
-// Поверх BigInt (bigint.nv, план 235). Своей арифметики лимбов нет — вся
+// Поверх BigInt (bignum.nv, план 235). Своей арифметики лимбов нет — вся
 // арифметика делегируется в BigInt. Карта: docs/plans/236-bigdecimal.md
 // в репе nova (план дословно отревьюирован владельцем 2026-07-30 — псевдокод
 // НЕ менять, только переносить в Nova-синтаксис).
@@ -10,9 +10,9 @@
 // lazy-normalize (§2.4 плана): normalize НЕ вызывается в конструкторах/операциях,
 // только в @equal/@hash/явном normalize().
 
-module bigint.bigdecimal
+module bignum.bigdecimal
 
-import bigint.{BigInt}
+import bignum.{BigInt, ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.string_builder.{StringBuilder}
 import std.checksums.fnv.{Fnv}
@@ -45,17 +45,6 @@ export fn MathContext.new(precision int, rm RoundingMode) -> MathContext
     { precision, rm }
 }
 
-/// Ошибка разбора десятичной строки в `BigDecimal` (см. §2.9 плана 236).
-#stable(since = "0.1")
-export type ParseBigDecimalError enum
-    | Empty
-    | OnlySign
-    | InvalidCharacter
-    | MultiplePoints
-    | MultipleExponents
-    | EmptyExponent
-    | EmptyMantissa
-
 /// Десятичное число произвольной точности: значение = `mant × 10^{-scale}`.
 /// `scale` может быть отрицательным (целое с неявными конечными нулями).
 #stable(since = "0.1")
@@ -83,7 +72,7 @@ export fn BigDecimal @scale() -> int => @scale
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Знак BigInt как int: -1 / 0 / 1. Избегает импорта/квалификации Sign-enum
-/// из bigint (BigInt уже даёт предикаты is_zero/is_neg).
+/// из bignum (BigInt уже даёт предикаты is_zero/is_neg).
 fn sign_num(b BigInt) -> int {
     if b.is_zero() { 0 } else if b.is_neg() { -1 } else { 1 }
 }
@@ -149,7 +138,7 @@ fn round_to_precision(mant_abs BigInt, target_precision int, rm RoundingMode, si
 // Явные перегрузки на КАЖДЫЙ член `Ints` (i8|i16|i32|i64|int|u8|u16|u32|u64|uint),
 // НЕ единая `fn[T Ints] T @to_bigdecimal()`. Причина — компиляторный дефект
 // (см. отчёт плана 236): generic-функция (bigdecimal.nv), вызывающая ДРУГУЮ
-// generic-функцию (bigint.nv `fn[T Ints] T @to_bigint()`) из СВОЕГО generic-
+// generic-функцию (bignum.nv `fn[T Ints] T @to_bigint()`) из СВОЕГО generic-
 // тела, не монообразуется — codegen эмиттирует вызов неразрешённого generic-
 // плейсхолдера, возвращающего исходный `int` вместо `BigInt` (C: "initializing
 // NovaValue_BigInt with an expression of incompatible type 'int'"). Конкретная
@@ -192,13 +181,13 @@ export fn uint @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
 #stable(since = "0.1")
 export fn i128 @to_bigdecimal() -> BigDecimal => BigDecimal.new(@to_bigint(), 0)
 
-/// Десятичная строка → `Result[BigDecimal, ParseBigDecimalError]`.
+/// Десятичная строка → `Result[BigDecimal, ParseNumberError]`.
 /// Формат (§2.9 плана 236):
 /// `[sign] (int-part ['.' [frac-part]] | '.' frac-part) [exp-part]`.
 /// `_` — разделитель разрядов, удаляется до вычисления scale (Rust/Python 3.6+
 /// стиль). Только ASCII `0`..`9` — не-ASCII цифры → `Err(InvalidCharacter)`.
 #stable(since = "0.1")
-export fn str @to_bigdecimal() -> Result[BigDecimal, ParseBigDecimalError] {
+export fn str @to_bigdecimal() -> Result[BigDecimal, ParseNumberError] {
     ro len = @byte_len()
     if len == 0 { return Err(Empty) }
     ro bytes = @bytes()

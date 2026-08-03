@@ -1,4 +1,4 @@
-module bigint.repro_direct_test
+module bignum.repro_direct_test
 
 type Pt value { x i64, y i64 }
 

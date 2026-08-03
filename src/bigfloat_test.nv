@@ -1,10 +1,10 @@
 // Тесты bigfloat — двоичное произвольной точности поверх BigInt.
 // План 237 (docs/plans/237-bigfloat.md в репе nova).
 
-module bigint.bigfloat_test
+module bignum.bigfloat_test
 
-import bigint.{BigInt}
-import bigint.bigfloat.{BigFloat, PrecisionContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, ParseBigFloatError, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+import bignum.{BigInt}
+import bignum.bigfloat.{BigFloat, PrecisionContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
 
 fn bf(m int, e int) -> BigFloat => BigFloat.new(m.to_bigint(), e)
 

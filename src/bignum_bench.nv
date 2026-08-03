@@ -1,7 +1,7 @@
 // Верификация умножения: school_mul vs karatsuba_mul дают одинаковый результат.
 // Замеры порога — в отчёте (threshold = 16, измерено для 10/30/100/300 лимбов).
 
-module bigint
+module bignum
 
 fn gen_limbs(n int) -> []u32 {
     mut limbs = []u32.new()

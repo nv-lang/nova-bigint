@@ -7,10 +7,10 @@
 // Ф.5: эталонные вектора, property-тесты (PRNG seed фиксирован), edge-кейсы,
 //      round-trip строк, панические контракты (deny-zero / precision>=1).
 
-module bigint.bigdecimal_test
+module bignum.bigdecimal_test
 
-import bigint.{BigInt}
-import bigint.bigdecimal.{BigDecimal, MathContext, RoundingMode, ParseBigDecimalError, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+import bignum.{BigInt}
+import bignum.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
 
 /// Тестовый хелпер: BigDecimal из (int-мантисса, scale) напрямую.
 fn bd(m int, s int) -> BigDecimal => BigDecimal.new(m.to_bigint(), s)
