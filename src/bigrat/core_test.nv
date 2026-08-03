@@ -5,13 +5,12 @@
 // (б) операторный desugar + - *, (в) кросс-модульный DivError из bignum,
 // (г) бланкет `fn[T Ints] T @to_bigrat()` → `@to_bigint()` в пакетном CU.
 
-module bignum.bigrat_test
+module bignum.bigrat
 
 import bignum.{Neg, Zero, Pos}
 import bignum.bigint.{BigInt}
 import std.math.int128.{i128}
 import std.prelude.core.{Option, Some, None}
-import bignum.bigrat.{BigRat}
 import bignum.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
 import bignum.bigfloat.{BigFloat, PrecisionContext}
 

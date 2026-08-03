@@ -1,13 +1,15 @@
 // Тесты bigrat — БОЛЬШИЕ вектора (план 240, Ф.5).
 // Файл `*_slow.nv`: в дефолтном `nova test src` НЕ исполняется (slow-lane,
-// Plan 156/D376 — суффикс `_slow`), включается флагом
-// `nova test src --include-slow`. В репо хранится как часть пакета:
+// Plan 156/D376 — суффикс `_slow` ОБЯЗАН быть самым внешним токеном имени
+// файла, `is_slow_file_stem` проверяет `stem.ends_with("_slow")` — поэтому
+// внутри папки-модуля файл называется `core_slow.nv`, а не `slow_test.nv`
+// (тот не кончается на `_slow` и молча выпал бы из slow-lane)), включается
+// флагом `nova test src --include-slow`. В репо хранится как часть пакета:
 // `nova check src` его проверяет, `nova lint` — линтует.
 
-module bignum.bigrat_slow
+module bignum.bigrat
 
 import bignum.bigint.{BigInt}
-import bignum.bigrat.{BigRat}
 import bignum.bigfloat.{BigFloat}
 
 fn br(n int, d int) -> BigRat => BigRat.new(n.to_bigint(), d.to_bigint())!!
