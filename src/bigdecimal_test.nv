@@ -9,7 +9,7 @@
 
 module bignum.bigdecimal_test
 
-import bignum.{BigInt}
+import bignum.bigint.{BigInt}
 import bignum.bigdecimal.{BigDecimal, MathContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
 
 /// Тестовый хелпер: BigDecimal из (int-мантисса, scale) напрямую.

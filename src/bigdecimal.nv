@@ -12,7 +12,8 @@
 
 module bignum.bigdecimal
 
-import bignum.{BigInt, ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+import bignum.{ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, MultipleExponents, EmptyExponent, EmptyMantissa}
+import bignum.bigint.{BigInt}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.string_builder.{StringBuilder}
 import std.checksums.fnv.{Fnv}

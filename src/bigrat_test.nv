@@ -7,7 +7,8 @@
 
 module bignum.bigrat_test
 
-import bignum.{BigInt, Neg, Zero, Pos}
+import bignum.{Neg, Zero, Pos}
+import bignum.bigint.{BigInt}
 import std.math.int128.{i128}
 import std.prelude.core.{Option, Some, None}
 import bignum.bigrat.{BigRat}

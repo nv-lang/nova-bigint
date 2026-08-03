@@ -3,7 +3,7 @@
 
 module bignum.bigfloat_test
 
-import bignum.{BigInt}
+import bignum.bigint.{BigInt}
 import bignum.bigfloat.{BigFloat, PrecisionContext, RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor}
 
 fn bf(m int, e int) -> BigFloat => BigFloat.new(m.to_bigint(), e)

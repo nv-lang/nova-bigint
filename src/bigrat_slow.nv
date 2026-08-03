@@ -6,7 +6,7 @@
 
 module bignum.bigrat_slow
 
-import bignum.{BigInt}
+import bignum.bigint.{BigInt}
 import bignum.bigrat.{BigRat}
 import bignum.bigfloat.{BigFloat}
 

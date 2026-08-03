@@ -135,7 +135,8 @@ bignum = { git = "https://github.com/nv-lang/nova-bignum", version = "0.1" }
 ```
 
 ```nova
-import bignum.{BigInt, Sign, ParseNumberError, DivError}
+import bignum.{Sign, ParseNumberError}
+import bignum.bigint.{BigInt, DivError}
 
 let a = 42.to_bigint()
 let b = "12345678901234567890".to_bigint()!!

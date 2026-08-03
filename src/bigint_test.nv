@@ -5,9 +5,10 @@
 // Ф.4: мутирующие операции.
 // Ф.5: i128-конверсии, операторы.
 
-module bignum
+module bignum.bigint_test
 
 import std.math.int128.{i128}
+import bignum.bigint.{BigInt}
 
 // ── Константы и предикаты ──────────────────────────────────────────────────
 
