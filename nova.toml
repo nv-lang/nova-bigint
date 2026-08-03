@@ -24,7 +24,7 @@ name = "bignum"
 version = "0.1.0"
 description = "Числа произвольной точности (BigInt/BigRat/BigDecimal/BigFloat) на чистом Nova — знак + limbs u32, без C-зависимостей"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/nv-lang/nova-bigint"
+repository = "https://github.com/nv-lang/nova-bignum"
 
 [lib]
 src = "src"

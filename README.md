@@ -131,7 +131,7 @@ type BigInt value {
 
 ```toml
 [dependencies]
-bignum = { git = "https://github.com/nv-lang/nova-bigint", version = "0.1" }
+bignum = { git = "https://github.com/nv-lang/nova-bignum", version = "0.1" }
 ```
 
 ```nova
