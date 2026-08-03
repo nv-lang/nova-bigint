@@ -123,10 +123,7 @@ const POW_10_9 u64 = 1000000000
 // Умножение (школьное O(n²) + Карацуба O(n^log₂3))
 // ──────────────────────────────────────────────────────────────────────────
 
-// `export` только ради кросс-модульной bench-сверки (bigint_bench.nv, после
-// раскола 243/У.5 больше не sibling-файл с общим module `bignum`); не часть
-// стабильного публичного API семейства.
-export fn school_mul(a []u32, b []u32) -> []u32 {
+fn school_mul(a []u32, b []u32) -> []u32 {
     if a.len() == 0 || b.len() == 0 { return []u32.new() }
     mut result = []u32.new().append_zero(a.len() + b.len())
     for i in 0..a.len() {
@@ -170,8 +167,7 @@ fn add_shifted(a []u32, b []u32, shift int) -> []u32 {
 
 const KARATSUBA_THRESHOLD = 16
 
-// `export` — та же причина, что у `school_mul` выше.
-export fn karatsuba_mul(a []u32, b []u32) -> []u32 {
+fn karatsuba_mul(a []u32, b []u32) -> []u32 {
     ro n = a.len().max(b.len())
     if n < KARATSUBA_THRESHOLD { return school_mul(a, b) }
     ro m = n / 2
