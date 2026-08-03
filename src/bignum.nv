@@ -16,4 +16,12 @@ export type Sign enum Neg | Zero | Pos
 /// BigRat, BigDecimal, BigFloat) — one shared enum across the whole
 /// parsing surface, no per-type variant or adapter (plan 243 Ф.U/У.1).
 #stable(since = "0.1")
-export type ParseNumberError enum Empty | OnlySign | InvalidCharacter | MultiplePoints | MultipleExponents | EmptyExponent | EmptyMantissa | ZeroDenominator
+export type ParseNumberError enum
+    | Empty
+    | OnlySign
+    | InvalidCharacter
+    | MultiplePoints
+    | MultipleExponents
+    | EmptyExponent
+    | EmptyMantissa
+    | ZeroDenominator
