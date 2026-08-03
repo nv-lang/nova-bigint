@@ -115,7 +115,7 @@ type BigInt value {
 }
 ```
 
-- Value-record на стеке: копия = Sign-clr + slice-header (~24 байта).
+- Value-record на стеке: копия = Sign-enum + slice-header (~24 байта).
 - Данные лимбов — на GC-куче, разделяются при копировании.
 - Иммутабельность гарантирует отсутствие alias-мутаций.
 - `==` — структурное (value-record, D328).

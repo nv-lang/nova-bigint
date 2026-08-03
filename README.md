@@ -130,7 +130,7 @@ type BigInt value {
 }
 ```
 
-- Value-record on the stack: a copy is Sign-clr + slice-header (~24
+- Value-record on the stack: a copy is Sign-enum + slice-header (~24
   bytes).
 - Limb data lives on the GC heap, shared across copies.
 - Immutability guarantees no alias mutations.
