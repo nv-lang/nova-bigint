@@ -1,0 +1,10 @@
+// `src/bigdecimal/` — folder-module `bignum.bigdecimal` (Nova module model:
+// a folder whose co-equal `.nv` files all declare the SAME
+// `module bignum.bigdecimal` merge into one module). Model and naming follow
+// `std/src/collections/vec/` in the `nova` repo 1:1. `_module.nv` itself
+// carries no items.
+//
+// Layout:
+//   core.nv       — `BigDecimal` type, MathContext/RoundingMode, arithmetic
+//   core_test.nv  — unit tests (Ф.1..Ф.5)
+module bignum.bigdecimal

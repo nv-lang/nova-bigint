@@ -10,7 +10,8 @@
 
 module bignum.bigrat
 
-import bignum.{BigInt, DivError, DivisionByZero, ParseNumberError, Sign, Neg, Zero, Pos, Empty, ZeroDenominator}
+import bignum.{ParseNumberError, Sign, Neg, Zero, Pos, Empty, ZeroDenominator}
+import bignum.bigint.{BigInt, DivError, DivisionByZero}
 import bignum.bigdecimal.{BigDecimal, MathContext}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}

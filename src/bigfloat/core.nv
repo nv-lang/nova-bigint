@@ -8,7 +8,8 @@
 
 module bignum.bigfloat
 
-import bignum.{BigInt, Sign, Neg, Zero, Pos, ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, EmptyExponent, EmptyMantissa}
+import bignum.{Sign, Neg, Zero, Pos, ParseNumberError, Empty, OnlySign, InvalidCharacter, MultiplePoints, EmptyExponent, EmptyMantissa}
+import bignum.bigint.{BigInt}
 import bignum.bigdecimal.{RoundingMode, HalfEven, HalfUp, HalfDown, Down, Up, Ceiling, Floor, BigDecimal}
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.checksums.fnv.{Fnv}

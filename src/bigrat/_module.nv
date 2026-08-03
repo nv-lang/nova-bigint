@@ -1,0 +1,12 @@
+// `src/bigrat/` — folder-module `bignum.bigrat` (Nova module model: a folder
+// whose co-equal `.nv` files all declare the SAME `module bignum.bigrat`
+// merge into one module). Model and naming follow
+// `std/src/collections/vec/` in the `nova` repo 1:1. `_module.nv` itself
+// carries no items.
+//
+// Layout:
+//   core.nv       — `BigRat` type, arithmetic (num/den over BigInt)
+//   core_test.nv  — unit tests (Ф.0..Ф.4)
+//   core_slow.nv  — slow-lane (D376): large-vector property tests, skipped by
+//                   default `nova test`, run via `--include-slow`
+module bignum.bigrat

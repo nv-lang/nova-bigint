@@ -1,0 +1,13 @@
+// `src/bigint/` — folder-module `bignum.bigint` (Nova module model: a folder
+// whose co-equal `.nv` files all declare the SAME `module bignum.bigint`
+// merge into one module — tests and the mul-equivalence check declared in
+// any peer see private helpers declared in `core.nv`, e.g. `school_mul` /
+// `karatsuba_mul` stay private — no cross-module export needed). Model and
+// naming follow `std/src/collections/vec/` in the `nova` repo 1:1.
+// `_module.nv` itself carries no items.
+//
+// Layout:
+//   core.nv           — `BigInt` type, arithmetic, string conversions
+//   core_test.nv       — unit tests (Ф.1..Ф.5)
+//   mul_equiv_test.nv  — school_mul vs karatsuba_mul equivalence check
+module bignum.bigint
