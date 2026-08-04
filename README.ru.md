@@ -140,8 +140,8 @@ bignum = { git = "https://github.com/nv-lang/nova-bignum", version = "0.1" }
 import bignum.{Sign, ParseNumberError}
 import bignum.bigint.{BigInt, DivError}
 
-let a = 42.to_bigint()
-let b = "12345678901234567890".to_bigint()!!
+ro a = 42.to_bigint()
+ro b = "12345678901234567890".to_bigint()!!
 assert(a + b > a)
 ```
 
