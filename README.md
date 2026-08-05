@@ -109,7 +109,8 @@ is structural, with no alignment step.
 - **Observers:** `@num()`/`@den()`, `@sign()`, `@is_zero()`, `@is_int()`,
   `@compare`/`@equal`/`@hash`.
 - **Conversions:** `T @to_bigrat()` (all `Ints` members + `i128` — exact),
-  `str @to_bigrat()` (forms `"3/4"`, `"-12"`, decimal `"1.25"`) →
+  `str @to_bigrat()` (forms `"3/4"` and `"-12"`; a decimal string goes through
+  `"1.25".to_bigdecimal()!!.to_bigrat()`) →
   `Result[BigRat, ParseNumberError]`, `@to_str()` (`"num/den"` or an
   integer), `@to_int() -> Option[int]`; bridges: `BigDecimal @to_bigrat()`
   (exact), `BigRat @to_bigdecimal(mc)` (rounded per `MathContext`),

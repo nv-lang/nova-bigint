@@ -95,7 +95,8 @@ assert(third.to_str() == "0.3333")
 - **Наблюдатели:** `@num()`/`@den()`, `@sign()`, `@is_zero()`, `@is_int()`,
   `@compare`/`@equal`/`@hash`.
 - **Конверсии:** `T @to_bigrat()` (все `Ints` + `i128` — точные),
-  `str @to_bigrat()` (формы `"3/4"`, `"-12"`, десятичная `"1.25"`) →
+  `str @to_bigrat()` (формы `"3/4"` и `"-12"`; десятичная строка идёт через
+  `"1.25".to_bigdecimal()!!.to_bigrat()`) →
   `Result[BigRat, ParseNumberError]`, `@to_str()` (`"num/den"` или целое),
   `@to_int() -> Option[int]`; мосты: `BigDecimal @to_bigrat()` (точный),
   `BigRat @to_bigdecimal(mc)` (округление по `MathContext`),
