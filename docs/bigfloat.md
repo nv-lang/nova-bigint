@@ -3,8 +3,10 @@
 **English** | [Русский](bigfloat.ru.md)
 
 `BigFloat` is an arbitrary-precision binary floating-point number —
-module `bignum.bigfloat`, analogous to MPFR or Go's `big.Float`. All
-arithmetic is `BigInt` convolutions with a rounding pass at the end. See
+module `bignum.bigfloat`, analogous to MPFR or Go's `big.Float`.
+`@plus`/`@minus`/`@times`/`@div` take an explicit `PrecisionContext`;
+`@neg`/`@abs` need none. Under the hood every operation is a `BigInt`
+convolution with a rounding pass at the end. See
 [overview.md](overview.md) for how it relates to the rest of the `bignum`
 family.
 

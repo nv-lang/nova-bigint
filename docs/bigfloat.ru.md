@@ -3,9 +3,11 @@
 [English](bigfloat.md) | **Русский**
 
 `BigFloat` — двоичное число с плавающей точкой произвольной точности,
-модуль `bignum.bigfloat`, аналог MPFR или `big.Float` из Go. Вся
-арифметика — свёртки `BigInt` с раундом в конце. Как он соотносится с
-остальной семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
+модуль `bignum.bigfloat`, аналог MPFR или `big.Float` из Go.
+`@plus`/`@minus`/`@times`/`@div` принимают явный `PrecisionContext`;
+`@neg`/`@abs` его не требуют. Под капотом каждая операция — свёртка
+`BigInt` с раундом в конце. Как он соотносится с остальной семьёй
+`bignum` — см. [overview.ru.md](overview.ru.md).
 
 ## Представление
 
