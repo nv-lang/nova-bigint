@@ -12,8 +12,10 @@ All four types are value-records: a copy is a small stack header (a sign
 plus a slice/pointer), the limb/mantissa data lives on the GC heap and is
 shared across copies, and immutability means no operation ever mutates a
 value another binding still holds. `BigDecimal`, `BigFloat`, and `BigRat`
-have no limb arithmetic of their own — every one of them is built on top of
-`BigInt` and delegates its arithmetic to it.
+each expose their arithmetic through Nova's operators and methods (see
+each type's page for exactly which operators apply and when a context or
+`Result` is required); under the hood every one of them is built on top
+of `BigInt` and delegates its arithmetic to it.
 
 ## The family, at a glance
 
