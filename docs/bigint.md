@@ -89,8 +89,8 @@ assert(q == 33.to_bigint())
 assert(r == 1.to_bigint())
 ```
 
-- `@plus`/`@minus`/`@neg`/`@abs`/`@times` — desugar to `+`/`-`/unary
-  `-`/`*` respectively; all infallible and exact.
+- `+`/`-`/unary `-`/`*` desugar to `@plus`/`@minus`/`@neg`/`@times`
+  respectively; `@abs` has no operator form. All infallible and exact.
 - `@div_rem(other) -> Result[(BigInt, BigInt), DivError]` — the one
   division primitive; `@div`/`@rem` are thin wrappers over it. **The `/`
   and `%` operators do NOT desugar to them** — division can fail (divide
