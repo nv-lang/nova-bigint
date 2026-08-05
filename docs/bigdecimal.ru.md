@@ -1,0 +1,180 @@
+# BigDecimal
+
+[English](bigdecimal.md) | **Русский**
+
+`BigDecimal` — десятичное число произвольной точности, модуль
+`bignum.bigdecimal`. Своей арифметики лимбов у него нет — каждая операция
+делегируется в [`BigInt`](bigint.ru.md). Как он соотносится с остальной
+семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
+
+## Представление
+
+```nova
+type BigDecimal value {
+    mant BigInt
+    scale int
+}
+```
+
+Значение = `mant × 10^{-scale}`. `scale` может быть отрицательным (целое
+с неявными конечными нулями). Копия — указатель на `BigInt` плюс `int` —
+примерно 16 байт на стеке; сами данные мантиссы разделяются, как у любого
+`BigInt`.
+
+## Построение
+
+```nova
+ro price = "19.99".to_bigdecimal()!!
+ro zero = BigDecimal.zero()
+ro direct = BigDecimal.new((1999).to_bigint(), 2)
+```
+
+- `str @to_bigdecimal() -> Result[BigDecimal, ParseNumberError]` — парсит
+  `[sign] (int-part ['.' [frac-part]] | '.' frac-part) [exp-part]`,
+  например `"19.99"`, `".5"`, `"5."`, `"1e-3"`, `"1.5E+2"`. `_`
+  допускается как разделитель групп разрядов и удаляется до вычисления
+  scale (стиль Rust/Python 3.6+). Цифры — только ASCII `0`-`9`, всё
+  остальное — `Err(InvalidCharacter)`.
+- `T @to_bigdecimal()` для любого члена `Ints` плюс `i128` — всегда
+  `scale = 0`, бесотказная.
+- `BigDecimal.new(mant, scale)` — прямое построение, без нормализации.
+- `BigDecimal.zero()` — каноничный ноль (`mant = 0, scale = 0`).
+
+`@scale() -> int` читает поле `scale` (свойство-читатель, не операция
+округления — см. `@rescale` ниже, у которой отдельное имя именно чтобы
+не конфликтовать с этим читателем).
+
+## Арифметика
+
+```nova
+ro a = "0.1".to_bigdecimal()!!
+ro b = "0.2".to_bigdecimal()!!
+ro c = a.plus(b)
+assert(c.to_str(scale_pad: 0) == "0.3")
+```
+
+`@plus`/`@minus`/`@times` десугарятся в `+`/`-`/`*`; `@neg`/`@abs` точные.
+Сложение и вычитание выравнивают scale (расширяют операнд с меньшим scale
+на нужную степень десяти) перед объединением мантисс; умножение просто
+складывает scale — ни одна из трёх операций никогда не округляет.
+
+```nova
+ro price = "19.99".to_bigdecimal()!!
+ro tax = "0.01".to_bigdecimal()!!
+assert(price.plus(tax).to_str() == "20.00")     // not 20.000000000000004, like f64
+```
+
+**Оператор `/` НЕ десугарится** — деление двух `BigDecimal` неоднозначно
+без явной точности, поэтому деление доступно только как
+`@div(other, MathContext)`:
+
+```nova
+ro third = (1).to_bigdecimal().div((3).to_bigdecimal(), MathContext.new(4, HalfEven))
+assert(third.to_str() == "0.3333")
+```
+
+Деление на ноль паникует (`requires !other.mant.is_zero()`) — паритет с
+контрактом деления-на-ноль примитивных `int`/`f64` (D423), не `Result`.
+
+## Округление: RoundingMode и MathContext
+
+```nova
+type RoundingMode enum HalfEven | HalfUp | HalfDown | Down | Up | Ceiling | Floor
+
+type MathContext value {
+    precision int
+    rm RoundingMode
+}
+```
+
+- `HalfEven` — banker's rounding, дефолт IEEE 754 (ровно половина — к
+  чётной цифре); `HalfUp` — школьное округление (0.5 → +1); `HalfDown` —
+  0.5 → 0; `Down` — усечение к нулю; `Up` — от нуля; `Ceiling` — к `+∞`;
+  `Floor` — к `-∞`.
+- `MathContext.new(precision, rm)` — `precision` считает **значащие цифры
+  мантиссы**, не десятичные знаки; паникует (`requires precision >= 1`)
+  ниже 1 — неограниченная точность (`0`) в V1 не поддержана, потому что
+  неограниченное `1/3` никогда не завершится.
+
+```nova
+ro a = (2).to_bigdecimal()
+ro b = (3).to_bigdecimal()
+ro mc = MathContext.new(5, HalfUp)
+assert(a.div(b, mc).to_str(scale_pad: 0) == "0.66667")
+```
+
+`@round(ctx MathContext) -> BigDecimal` округляет до `ctx.precision`
+значащих цифр. `@rescale(target int, rm RoundingMode) -> BigDecimal` —
+scale-ориентированный аналог (соответствует Java `setScale(int,
+RoundingMode)`): `target > scale` дополняет нулями без округления,
+`target < scale` округляет, отбрасывая десятичные знаки, а
+`target < 0` округляет до `10^|target|` (например, `target = -2`
+округляет до ближайшей сотни).
+
+## Сравнение и равенство
+
+```nova
+ro x = BigDecimal.new((10).to_bigint(), 1)   // 1.0
+ro y = BigDecimal.new((1).to_bigint(), 0)    // 1
+assert(x.compare(y) == 0)
+assert(x == y)
+```
+
+`@compare(other) -> int` НЕ нормализует — выравнивает scale (домножает
+операнд с меньшим scale на подходящую степень десяти) и сравнивает
+мантиссы напрямую. `@equal(other)` (за которым стоит `==`) вместо этого
+сначала нормализует **оба** операнда — паритет с крейтом `bigdecimal` из
+Rust, где `1.0 == 1`. Эта асимметрия осознанна: `@compare` никогда не
+тратит проход нормализации на горячем пути, `@equal` без каноничной
+формы просто некорректен. `@hash()` согласован с `@equal` (тоже
+нормализует).
+
+## Нормализация
+
+`@normalize() -> BigDecimal` убирает конечные десятичные нули мантиссы,
+уменьшая `scale` соответственно — она **lazy**: ни один конструктор или
+арифметическая операция не вызывает её неявно, только `@equal`/`@hash`/
+явный вызов. Это держит арифметику дешёвой (без O(n²)-цикла деления на
+10 на каждой операции) ценой того, что значения `BigDecimal` не в единой
+каноничной форме, пока вы не запросите её явно.
+
+## Строковый вывод
+
+```nova
+ro x = "12.5".to_bigdecimal()!!
+assert(x.to_str() == "12.5")
+assert(x.to_str(scale_pad: 4) == "12.5000")
+```
+
+`@to_str(scale_pad int = 0) -> str` — `scale_pad` — минимум цифр после
+запятой (дополнение справа нулями; `0` — без дополнения). Знак печатается
+первым, перед любым ведущим нулём, поэтому `-0.5` корректно
+round-trip'ится.
+
+## Конверсии в фиксированные типы
+
+`@to_int() -> Option[int]` и `@to_i128() -> Option[i128]` сначала
+нормализуют: положительный остаточный `scale` после нормализации
+(настоящая дробная часть) даёт `None` вместо молчаливого усечения;
+отрицательный `scale` (целое с неявными конечными нулями)
+материализуется перед проверкой диапазона.
+
+## Чего нет в BigDecimal V1
+
+`pow`/`sqrt`, сам оператор `/`, мутабельные методы `@*_assign`, цепные
+операции с авто-переносом точности, интеграция с generic-числовыми
+type-sets, неявные коэрсии/литералы, кэш малых степеней 10, умножение
+Toom-Cook (унаследовано от базового `BigInt`).
+
+## Связанные документы
+
+- [overview.ru.md](overview.ru.md) — карта семьи `bignum`, общее правило
+  точных/теряющих точность конверсий
+- [bigint.ru.md](bigint.ru.md) — тип, которому в итоге делегирует каждая
+  операция `BigDecimal`
+- [bigfloat.ru.md](bigfloat.ru.md) — мост `BigDecimal ↔ BigFloat` (через
+  `PrecisionContext`)
+- [bigrat.ru.md](bigrat.ru.md) — точный мост `BigDecimal ↔ BigRat`
+- [`src/bigdecimal/core.nv`](../src/bigdecimal/core.nv) — полный исходник
+- [`src/bigdecimal/core_test.nv`](../src/bigdecimal/core_test.nv) —
+  полный набор тестов
