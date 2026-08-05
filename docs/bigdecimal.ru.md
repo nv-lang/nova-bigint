@@ -3,9 +3,10 @@
 [English](bigdecimal.md) | **Русский**
 
 `BigDecimal` — десятичное число произвольной точности, модуль
-`bignum.bigdecimal`. Собственной арифметики больших чисел у него нет — каждая операция
-делегируется в [`BigInt`](bigint.ru.md). Как он соотносится с остальной
-семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
+`bignum.bigdecimal`. Сложение, вычитание и умножение — обычными операторами
+`+`/`-`/`*`; деление требует явной точности (см. ниже). Под капотом каждая
+операция делегируется в [`BigInt`](bigint.ru.md). Как он соотносится с
+остальной семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
 
 ## Представление
 
@@ -49,11 +50,11 @@ ro direct = BigDecimal.new(1999.to_bigint(), 2)
 ```nova
 ro a = "0.1".to_bigdecimal()!!
 ro b = "0.2".to_bigdecimal()!!
-ro c = a.plus(b)
+ro c = a + b
 assert(c.to_str(scale_pad: 0) == "0.3")
 ```
 
-`@plus`/`@minus`/`@times` десугарятся в `+`/`-`/`*`; `@neg`/`@abs` точные.
+`+`/`-`/`*` десугарятся в `@plus`/`@minus`/`@times`; `@neg`/`@abs` точные.
 Сложение и вычитание выравнивают scale (расширяют операнд с меньшим scale
 на нужную степень десяти) перед объединением мантисс; умножение просто
 складывает scale — ни одна из трёх операций никогда не округляет.
@@ -61,7 +62,7 @@ assert(c.to_str(scale_pad: 0) == "0.3")
 ```nova
 ro price = "19.99".to_bigdecimal()!!
 ro tax = "0.01".to_bigdecimal()!!
-assert(price.plus(tax).to_str() == "20.00")     // not 20.000000000000004, like f64
+assert((price + tax).to_str() == "20.00")     // not 20.000000000000004, like f64
 ```
 
 **Оператор `/` НЕ десугарится** — деление двух `BigDecimal` неоднозначно

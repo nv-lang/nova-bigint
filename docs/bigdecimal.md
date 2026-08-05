@@ -3,9 +3,11 @@
 **English** | [Русский](bigdecimal.ru.md)
 
 `BigDecimal` is an arbitrary-precision decimal number — module
-`bignum.bigdecimal`. It carries no big-number arithmetic of its own; every
-operation delegates to [`BigInt`](bigint.md). See [overview.md](overview.md)
-for how it relates to the rest of the `bignum` family.
+`bignum.bigdecimal`. Addition, subtraction, and multiplication use the
+ordinary `+`/`-`/`*` operators; division needs an explicit precision (see
+below). Under the hood every operation delegates to
+[`BigInt`](bigint.md). See [overview.md](overview.md) for how it relates
+to the rest of the `bignum` family.
 
 ## Representation
 
@@ -49,11 +51,11 @@ specifically to avoid colliding with this reader).
 ```nova
 ro a = "0.1".to_bigdecimal()!!
 ro b = "0.2".to_bigdecimal()!!
-ro c = a.plus(b)
+ro c = a + b
 assert(c.to_str(scale_pad: 0) == "0.3")
 ```
 
-`@plus`/`@minus`/`@times` desugar to `+`/`-`/`*`; `@neg`/`@abs` are exact.
+`+`/`-`/`*` desugar to `@plus`/`@minus`/`@times`; `@neg`/`@abs` are exact.
 Addition and subtraction align scales (widen the smaller-scale operand by
 the needed power of ten) before combining mantissas; multiplication just
 adds the scales — none of the three ever rounds.
@@ -61,7 +63,7 @@ adds the scales — none of the three ever rounds.
 ```nova
 ro price = "19.99".to_bigdecimal()!!
 ro tax = "0.01".to_bigdecimal()!!
-assert(price.plus(tax).to_str() == "20.00")     // not 20.000000000000004, like f64
+assert((price + tax).to_str() == "20.00")     // not 20.000000000000004, like f64
 ```
 
 **The `/` operator does NOT desugar** — dividing two `BigDecimal`s is
