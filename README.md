@@ -74,7 +74,7 @@ ro price = "19.99".to_bigdecimal()!!
 ro tax = "0.01".to_bigdecimal()!!
 assert(price.plus(tax).to_str() == "20.00")     // not 20.000000000000004, like f64
 
-ro third = (1).to_bigdecimal().div((3).to_bigdecimal(), MathContext.new(4, HalfEven))
+ro third = 1.to_bigdecimal().div(3.to_bigdecimal(), MathContext.new(4, HalfEven))
 assert(third.to_str() == "0.3333")
 ```
 
