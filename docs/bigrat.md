@@ -3,8 +3,10 @@
 **English** | [Русский](bigrat.ru.md)
 
 `BigRat` is an exact rational number — module `bignum.bigrat`, analogous
-to Go's `big.Rat`/Rust's `num-rational`. It has no limb arithmetic of its
-own; every operation delegates to [`BigInt`](bigint.md). See
+to Go's `big.Rat`/Rust's `num-rational`. Addition, subtraction, and
+multiplication use the ordinary `+`/`-`/`*` operators, with no rounding
+ever possible; division returns a `Result` (see below). Under the hood
+every operation delegates to [`BigInt`](bigint.md). See
 [overview.md](overview.md) for how it relates to the rest of the `bignum`
 family.
 
@@ -85,19 +87,20 @@ point involved anywhere). `@hash()` is consistent with `@equal`.
 ```nova
 ro a = BigRat.new(1.to_bigint(), 2.to_bigint())!!
 ro b = BigRat.new(1.to_bigint(), 3.to_bigint())!!
-ro s = a.plus(b)
+ro s = a + b
 assert(s.num() == 5.to_bigint())
 assert(s.den() == 6.to_bigint())
 ```
 
-`@plus`/`@minus`/`@times` are exact — no rounding is possible for exact
-rationals, so unlike `BigDecimal`/`BigFloat` they need no context
-argument at all. `@neg`/`@abs` are exact too.
+`+`/`-`/`*` are exact — no rounding is possible for exact rationals, so
+unlike `BigDecimal`/`BigFloat` they need no context argument at all;
+under the hood they desugar to `@plus`/`@minus`/`@times`. `@neg`/`@abs`
+are exact too.
 
 ```nova
 ro third = BigRat.new(1.to_bigint(), 3.to_bigint())!!
 ro sixth = BigRat.new(1.to_bigint(), 6.to_bigint())!!
-assert(third.plus(sixth) == BigRat.new(1.to_bigint(), 2.to_bigint())!!)
+assert(third + sixth == BigRat.new(1.to_bigint(), 2.to_bigint())!!)
 ```
 
 `@div(other)` and `@recip()` both return `Result[BigRat, DivError]` — the

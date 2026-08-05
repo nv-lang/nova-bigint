@@ -3,9 +3,11 @@
 [English](bigrat.md) | **Русский**
 
 `BigRat` — точное рациональное число, модуль `bignum.bigrat`, аналог
-`big.Rat` из Go / `num-rational` из Rust. Своей арифметики лимбов у него
-нет — каждая операция делегируется в [`BigInt`](bigint.ru.md). Как он
-соотносится с остальной семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
+`big.Rat` из Go / `num-rational` из Rust. Сложение, вычитание и умножение
+— обычными операторами `+`/`-`/`*`, округление для них в принципе
+невозможно; деление возвращает `Result` (см. ниже). Под капотом каждая
+операция делегируется в [`BigInt`](bigint.ru.md). Как он соотносится с
+остальной семьёй `bignum` — см. [overview.ru.md](overview.ru.md).
 
 ## Представление и нормальная форма
 
@@ -84,19 +86,20 @@ num_b·den_a` (корректно, потому что `den > 0` с обеих �
 ```nova
 ro a = BigRat.new(1.to_bigint(), 2.to_bigint())!!
 ro b = BigRat.new(1.to_bigint(), 3.to_bigint())!!
-ro s = a.plus(b)
+ro s = a + b
 assert(s.num() == 5.to_bigint())
 assert(s.den() == 6.to_bigint())
 ```
 
-`@plus`/`@minus`/`@times` точные — округление для точных рациональных
-невозможно в принципе, поэтому, в отличие от `BigDecimal`/`BigFloat`, им
-вообще не нужен аргумент-контекст. `@neg`/`@abs` тоже точные.
+`+`/`-`/`*` точные — округление для точных рациональных невозможно в
+принципе, поэтому, в отличие от `BigDecimal`/`BigFloat`, им вообще не
+нужен аргумент-контекст; под капотом они десугарятся в
+`@plus`/`@minus`/`@times`. `@neg`/`@abs` тоже точные.
 
 ```nova
 ro third = BigRat.new(1.to_bigint(), 3.to_bigint())!!
 ro sixth = BigRat.new(1.to_bigint(), 6.to_bigint())!!
-assert(third.plus(sixth) == BigRat.new(1.to_bigint(), 2.to_bigint())!!)
+assert(third + sixth == BigRat.new(1.to_bigint(), 2.to_bigint())!!)
 ```
 
 `@div(other)` и `@recip()` оба возвращают `Result[BigRat, DivError]` —
