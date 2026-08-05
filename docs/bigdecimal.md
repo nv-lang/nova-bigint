@@ -90,10 +90,36 @@ type MathContext value {
 }
 ```
 
-- `HalfEven` — banker's rounding, IEEE 754 default (ties go to the even
-  digit); `HalfUp` — school rounding (0.5 → +1); `HalfDown` — 0.5 → 0;
-  `Down` — truncate toward zero; `Up` — away from zero; `Ceiling` — toward
-  `+∞`; `Floor` — toward `-∞`.
+All seven modes agree when the dropped tail is anywhere except exactly
+half: below half, they all truncate; above half, they all round away from
+zero. They only disagree right at the "exactly half" boundary, and — for
+`Up`/`Down`/`Ceiling`/`Floor` — on which way is "away". Rounding to the
+nearest integer:
+
+| Mode | Rule | `2.5` → | `3.5` → | `−2.5` → | `2.4` → | `2.6` → |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HalfEven` | exact half → toward the even neighbor ("banker's rounding") | `2` | `4` | `−2` | `2` | `3` |
+| `HalfUp` | exact half → away from zero (school rounding) | `3` | `4` | `−3` | `2` | `3` |
+| `HalfDown` | exact half → toward zero | `2` | `3` | `−2` | `2` | `3` |
+| `Down` | always toward zero (truncate, ignores the tail) | `2` | `3` | `−2` | `2` | `2` |
+| `Up` | always away from zero (whenever the tail is nonzero) | `3` | `4` | `−3` | `3` | `3` |
+| `Ceiling` | always toward `+∞` | `3` | `4` | `−2` | `3` | `3` |
+| `Floor` | always toward `-∞` | `2` | `3` | `−3` | `2` | `2` |
+
+`HalfEven` is the default worth reaching for: it's the IEEE 754 default
+and what money math typically wants, because ties round up exactly as
+often as they round down, so no systematic bias accumulates over many
+roundings. The mode is picked per call via `MathContext.new(precision,
+rm)` — there's no ambient default.
+
+```nova
+ro half = "2.5".to_bigdecimal()!!
+ro even = half.rescale(0, HalfEven)     // 2 — 2.5 ties to the even neighbor
+ro up = half.rescale(0, HalfUp)         // 3 — 2.5 always rounds away from zero
+assert(even.to_str() == "2")
+assert(up.to_str() == "3")
+```
+
 - `MathContext.new(precision, rm)` — `precision` counts **significant
   digits of the mantissa**, not decimal places; it panics
   (`requires precision >= 1`) below 1 — unbounded precision (`0`) is not
