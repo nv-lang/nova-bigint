@@ -42,7 +42,7 @@ export fn BigInt.one() -> BigInt => { sign: Pos, limbs: []u32.of(1) }
 // ──────────────────────────────────────────────────────────────────────────
 
 fn normalize(mut limbs []u32) -> () {
-    while limbs.len() > 0 && limbs[limbs.len() - 1] == 0 {
+    while limbs.last() == Some(0) {
         limbs.pop()
     }
 }
