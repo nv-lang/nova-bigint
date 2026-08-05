@@ -1,5 +1,5 @@
 // Целые произвольной точности (BigInt).
-// Представление: value-record со знаком (Sign-enum) и limbs []u32
+// Представление: именованный кортеж (D215) со знаком (Sign-enum) и limbs []u32
 // (little-endian, без ведущих нулей).
 // Ноль = Zero + пустые limbs (каноничен, единственное представление).
 
@@ -18,24 +18,21 @@ import bignum.{Sign, Neg, Zero, Pos, ParseNumberError, Empty, OnlySign, InvalidC
 #stable(since = "0.1")
 export type DivError enum DivisionByZero
 
-/// Целое произвольной точности со знаком.
+/// Arbitrary-precision signed integer.
 ///
-/// Value-record: копия = Sign-clr + slice-header (~24 байта).
-/// Данные лимбов — на GC-куче, разделяются при копировании.
-/// Все операции возвращают нормализованный результат.
+/// Named tuple: copy = Sign tag + slice header (~24 bytes, stack-allocated).
+/// Limb data lives on the GC heap and is shared on copy. All operations
+/// return a normalized result.
 #stable(since = "0.1")
-export type BigInt value {
-    sign Sign
-    limbs []u32
-}
+export type BigInt(sign Sign, limbs []u32)
 
 /// Ноль.
 #stable(since = "0.1")
-export fn BigInt.zero() -> BigInt => { sign: Zero, limbs: []u32.new() }
+export fn BigInt.zero() -> BigInt => BigInt(Zero, []u32.new())
 
 /// Единица.
 #stable(since = "0.1")
-export fn BigInt.one() -> BigInt => { sign: Pos, limbs: []u32.of(1) }
+export fn BigInt.one() -> BigInt => BigInt(Pos, []u32.of(1))
 
 // ──────────────────────────────────────────────────────────────────────────
 // Приватные хелперы
@@ -408,7 +405,7 @@ export fn[T Ints] T @to_bigint() -> BigInt {
     mut limbs = []u32.new()
     limbs.push(lo)
     if hi != 0 { limbs.push(hi) }
-    { sign: if negative { Neg } else { Pos }, limbs }
+    BigInt(if negative { Neg } else { Pos }, limbs)
 }
 
 /// `i128` → `BigInt`.
@@ -432,7 +429,7 @@ export fn i128 @to_bigint() -> BigInt {
     limbs.push(m_hi as u32)
     limbs.push((m_hi >> 32) as u32)
     normalize(limbs)
-    { sign: if negative { Neg } else { Pos }, limbs }
+    BigInt(if negative { Neg } else { Pos }, limbs)
 }
 
 /// Десятичная строка → `Result[BigInt, ParseNumberError]`.
@@ -487,7 +484,7 @@ export fn str @to_bigint() -> Result[BigInt, ParseNumberError] {
 }
 
 // Приватный конструктор для внутреннего использования.
-fn BigInt.new_raw(s Sign, limbs []u32) -> BigInt => { sign: s, limbs }
+fn BigInt.new_raw(s Sign, limbs []u32) -> BigInt => BigInt(s, limbs)
 
 fn mul_limb_small(a []u32, b u64) -> BigInt {
     if a.len() == 0 || b == 0 { return BigInt.zero() }
@@ -499,7 +496,7 @@ fn mul_limb_small(a []u32, b u64) -> BigInt {
         carry = prod >> 32
     }
     if carry != 0 { result.push(carry as u32) }
-    { sign: Pos, limbs: result }
+    BigInt(Pos, result)
 }
 
 /// В `int`, если значение помещается; иначе `None`.
@@ -591,19 +588,19 @@ export fn BigInt @to_str() -> str {
 /// `a + b`. Оператор `+`.
 #stable(since = "0.1")
 export fn BigInt @plus(other BigInt) -> BigInt {
-    if @is_zero() { return { sign: other.sign, limbs: other.limbs.clone() } }
-    if other.is_zero() { return { @sign, limbs: @limbs.clone() } }
+    if @is_zero() { return BigInt(other.sign, other.limbs.clone()) }
+    if other.is_zero() { return BigInt(@sign, @limbs.clone()) }
     match (@sign, other.sign) {
         (Pos, Pos) | (Neg, Neg) => {
-            { @sign, limbs: limb_add(@limbs, other.limbs) }
+            BigInt(@sign, limb_add(@limbs, other.limbs))
         }
         _ => {
             ro cmp = limb_compare(@limbs, other.limbs)
             if cmp == 0 { BigInt.zero() }
             else if cmp > 0 {
-                { @sign, limbs: limb_sub(@limbs, other.limbs) }
+                BigInt(@sign, limb_sub(@limbs, other.limbs))
             } else {
-                { sign: other.sign, limbs: limb_sub(other.limbs, @limbs) }
+                BigInt(other.sign, limb_sub(other.limbs, @limbs))
             }
         }
     }
@@ -617,7 +614,7 @@ export fn BigInt @minus(other BigInt) -> BigInt => @plus(-other)
 #stable(since = "0.1")
 export fn BigInt @neg() -> BigInt {
     if @is_zero() { return @ }
-    { sign: sign_neg(@sign), limbs: @limbs.clone() }
+    BigInt(sign_neg(@sign), @limbs.clone())
 }
 
 /// Абсолютная величина.
@@ -625,7 +622,7 @@ export fn BigInt @neg() -> BigInt {
 export fn BigInt @abs() -> BigInt {
     if @is_zero() { return @ }
     match @sign {
-        Neg => { sign: Pos, limbs: @limbs.clone() }
+        Neg => BigInt(Pos, @limbs.clone())
         _ => @
     }
 }
@@ -634,7 +631,7 @@ export fn BigInt @abs() -> BigInt {
 #stable(since = "0.1")
 export fn BigInt @times(other BigInt) -> BigInt {
     if @is_zero() || other.is_zero() { return BigInt.zero() }
-    { sign: sign_mul(@sign, other.sign), limbs: mul_limbs(@limbs, other.limbs) }
+    BigInt(sign_mul(@sign, other.sign), mul_limbs(@limbs, other.limbs))
 }
 
 /// `(a / b, a % b)` — деление с остатком.
@@ -732,7 +729,7 @@ export fn BigInt @shl(bits int) -> BigInt {
         carry = v >> 32
     }
     if carry != 0 { result.push(carry as u32) }
-    { @sign, limbs: result }
+    BigInt(@sign, result)
 }
 
 /// Unsigned shift RIGHT (trunc-toward-zero division by 2^{bits}). Sign is preserved.
@@ -758,7 +755,7 @@ export fn BigInt @shr(bits int) -> BigInt {
     }
     normalize(result)
     if result.len() == 0 { return BigInt.zero() }
-    { @sign, limbs: result }
+    BigInt(@sign, result)
 }
 
 /// Чётное ли число (младший бит).
