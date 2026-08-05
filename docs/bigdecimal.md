@@ -26,7 +26,7 @@ any `BigInt`.
 ```nova
 ro price = "19.99".to_bigdecimal()!!
 ro zero = BigDecimal.zero()
-ro direct = BigDecimal.new((1999).to_bigint(), 2)
+ro direct = BigDecimal.new(1999.to_bigint(), 2)
 ```
 
 - `str @to_bigdecimal() -> Result[BigDecimal, ParseNumberError]` — parses
@@ -69,7 +69,7 @@ ambiguous without an explicit precision, so division is only available as
 `@div(other, MathContext)`:
 
 ```nova
-ro third = (1).to_bigdecimal().div((3).to_bigdecimal(), MathContext.new(4, HalfEven))
+ro third = 1.to_bigdecimal().div(3.to_bigdecimal(), MathContext.new(4, HalfEven))
 assert(third.to_str() == "0.3333")
 ```
 
@@ -98,8 +98,8 @@ type MathContext value {
   supported in V1 because unbounded `1/3` never terminates.
 
 ```nova
-ro a = (2).to_bigdecimal()
-ro b = (3).to_bigdecimal()
+ro a = 2.to_bigdecimal()
+ro b = 3.to_bigdecimal()
 ro mc = MathContext.new(5, HalfUp)
 assert(a.div(b, mc).to_str(scale_pad: 0) == "0.66667")
 ```
@@ -115,8 +115,8 @@ nearest hundred).
 ## Comparison and equality
 
 ```nova
-ro x = BigDecimal.new((10).to_bigint(), 1)   // 1.0
-ro y = BigDecimal.new((1).to_bigint(), 0)    // 1
+ro x = BigDecimal.new(10.to_bigint(), 1)   // 1.0
+ro y = BigDecimal.new(1.to_bigint(), 0)    // 1
 assert(x.compare(y) == 0)
 assert(x == y)
 ```

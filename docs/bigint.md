@@ -34,7 +34,7 @@ type BigInt value {
 ro z = BigInt.zero()
 ro o = BigInt.one()
 
-ro a = (42).to_bigint()
+ro a = 42.to_bigint()
 ro b = "12345678901234567890".to_bigint()!!
 ```
 
@@ -53,7 +53,7 @@ assert(BigInt.zero().is_zero())
 assert(!BigInt.one().is_zero())
 assert(BigInt.one().is_one())
 assert(((-1).to_bigint()).is_neg())
-assert((42).to_bigint().is_even())
+assert(42.to_bigint().is_even())
 ```
 
 `@is_zero()`, `@is_neg()`, `@is_pos()`, `@is_one()`, `@is_even()`,
@@ -62,11 +62,11 @@ assert((42).to_bigint().is_even())
 ## Comparison
 
 ```nova
-assert((42).to_bigint() == (42).to_bigint())
-assert((42).to_bigint() != (43).to_bigint())
+assert(42.to_bigint() == 42.to_bigint())
+assert(42.to_bigint() != 43.to_bigint())
 assert(BigInt.one() > BigInt.zero())
 assert((-BigInt.one()) < BigInt.one())
-assert((100).to_bigint().compare((50).to_bigint()) > 0)
+assert(100.to_bigint().compare(50.to_bigint()) > 0)
 ```
 
 `@equal(other)` backs `==`/`!=`; `@compare(other) -> int` gives the full
@@ -75,17 +75,17 @@ signed `-1`/`0`/`1` ordering and backs `<`/`>`.
 ## Arithmetic
 
 ```nova
-ro a = (2).to_bigint()
-ro b = (3).to_bigint()
-assert(a + b == (5).to_bigint())
+ro a = 2.to_bigint()
+ro b = 3.to_bigint()
+assert(a + b == 5.to_bigint())
 assert(a - b == (-1).to_bigint())
 assert(-a == (-2).to_bigint())
 assert(a.abs() == a)
-assert(a * b == (6).to_bigint())
+assert(a * b == 6.to_bigint())
 
-ro (q, r) = (100).to_bigint().div_rem((3).to_bigint())!!
-assert(q == (33).to_bigint())
-assert(r == (1).to_bigint())
+ro (q, r) = 100.to_bigint().div_rem(3.to_bigint())!!
+assert(q == 33.to_bigint())
+assert(r == 1.to_bigint())
 ```
 
 - `@plus`/`@minus`/`@neg`/`@abs`/`@times` — desugar to `+`/`-`/unary
@@ -101,8 +101,8 @@ assert(r == (1).to_bigint())
 - `@pow(n uint) -> BigInt` — binary exponentiation, `n >= 0`.
 
 ```nova
-assert((2).to_bigint().pow(10) == (1024).to_bigint())
-assert((48).to_bigint().gcd((36).to_bigint()) == (12).to_bigint())
+assert(2.to_bigint().pow(10) == 1024.to_bigint())
+assert(48.to_bigint().gcd(36.to_bigint()) == 12.to_bigint())
 ```
 
 ### Bit operations
@@ -122,7 +122,7 @@ assert(x.shr(100) == BigInt.one())
 ## String conversions
 
 ```nova
-assert((42).to_bigint().to_str() == "42")
+assert(42.to_bigint().to_str() == "42")
 assert((-42).to_bigint().to_str() == "-42")
 
 ro v = (12345678901234567890 as u64).to_bigint()
@@ -135,7 +135,7 @@ assert(v.to_str() == "12345678901234567890")
 ## Conversions back to fixed-width types
 
 ```nova
-assert((1234567890).to_bigint().to_int() == Some(1234567890))
+assert(1234567890.to_bigint().to_int() == Some(1234567890))
 ```
 
 `@to_int() -> Option[int]` and `@to_i128() -> Option[i128]` — `Some` when

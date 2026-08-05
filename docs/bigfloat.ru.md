@@ -44,7 +44,7 @@ ro ctx = PrecisionContext.new(53, HalfEven)
 ## Построение
 
 ```nova
-ro x = (42).to_bigfloat(ctx)
+ro x = 42.to_bigfloat(ctx)
 ro y = (1.0).to_bigfloat()
 ro z = "0b101.01p0".to_bigfloat(ctx)!!
 assert(z.to_f64() == Some(5.25))
@@ -84,10 +84,10 @@ assert(z.to_f64() == Some(5.25))
 ## Арифметика
 
 ```nova
-ro a = BigFloat.new((4).to_bigint(), 0)
-ro b = BigFloat.new((2).to_bigint(), 0)
+ro a = BigFloat.new(4.to_bigint(), 0)
+ro b = BigFloat.new(2.to_bigint(), 0)
 ro sum = a.plus(b, ctx)
-assert(sum.equal(BigFloat.new((6).to_bigint(), 0)))
+assert(sum.equal(BigFloat.new(6.to_bigint(), 0)))
 ```
 
 `@plus`/`@minus`/`@times`/`@div` — все принимают явный
@@ -98,9 +98,9 @@ assert(sum.equal(BigFloat.new((6).to_bigint(), 0)))
 D423, что и у `BigDecimal`.
 
 ```nova
-ro four = BigFloat.new((4).to_bigint(), 0)
+ro four = BigFloat.new(4.to_bigint(), 0)
 ro root = four.sqrt(ctx)
-assert(root.equal(BigFloat.new((2).to_bigint(), 0)))
+assert(root.equal(BigFloat.new(2.to_bigint(), 0)))
 ```
 
 `@sqrt(ctx)` использует метод Ньютона — **V1: в пределах ±1 ulp, не
@@ -143,7 +143,7 @@ assert(back == Some(5.25))
 ## Мост к BigDecimal
 
 ```nova
-ro bf = BigFloat.new((5).to_bigint(), -1)   // 5 * 2^-1 = 2.5
+ro bf = BigFloat.new(5.to_bigint(), -1)   // 5 * 2^-1 = 2.5
 ro bd = bf.to_bigdecimal()
 assert(bd.to_str() == "2.5")
 ```

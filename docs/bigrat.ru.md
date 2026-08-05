@@ -34,13 +34,13 @@ type BigRat value {
 ## Построение
 
 ```nova
-ro r = BigRat.new((1).to_bigint(), (2).to_bigint())!!
-assert(r.num() == (1).to_bigint())
-assert(r.den() == (2).to_bigint())
+ro r = BigRat.new(1.to_bigint(), 2.to_bigint())!!
+assert(r.num() == 1.to_bigint())
+assert(r.den() == 2.to_bigint())
 
 ro a = BigRat.new((-1).to_bigint(), (-2).to_bigint())!!
-assert(a.num() == (1).to_bigint())
-assert(a.den() == (2).to_bigint())
+assert(a.num() == 1.to_bigint())
+assert(a.den() == 2.to_bigint())
 ```
 
 `BigRat.new(num, den) -> Result[BigRat, DivError]` строит `BigRat` из
@@ -49,7 +49,7 @@ assert(a.den() == (2).to_bigint())
 `BigRat.zero()`/`BigRat.one()` — две константы.
 
 ```nova
-ro r = (42).to_bigrat()
+ro r = 42.to_bigrat()
 ro neg = (-7).to_bigrat()
 ```
 
@@ -65,8 +65,8 @@ ro neg = (-7).to_bigrat()
 ## Сравнение и равенство
 
 ```nova
-ro a = BigRat.new((2).to_bigint(), (4).to_bigint())!!
-ro b = BigRat.new((-6).to_bigint(), (8).to_bigint())!!
+ro a = BigRat.new(2.to_bigint(), 4.to_bigint())!!
+ro b = BigRat.new((-6).to_bigint(), 8.to_bigint())!!
 assert(a.compare(b) > 0)
 ```
 
@@ -82,11 +82,11 @@ num_b·den_a` (корректно, потому что `den > 0` с обеих �
 ## Арифметика
 
 ```nova
-ro a = BigRat.new((1).to_bigint(), (2).to_bigint())!!
-ro b = BigRat.new((1).to_bigint(), (3).to_bigint())!!
+ro a = BigRat.new(1.to_bigint(), 2.to_bigint())!!
+ro b = BigRat.new(1.to_bigint(), 3.to_bigint())!!
 ro s = a.plus(b)
-assert(s.num() == (5).to_bigint())
-assert(s.den() == (6).to_bigint())
+assert(s.num() == 5.to_bigint())
+assert(s.den() == 6.to_bigint())
 ```
 
 `@plus`/`@minus`/`@times` точные — округление для точных рациональных
@@ -94,9 +94,9 @@ assert(s.den() == (6).to_bigint())
 вообще не нужен аргумент-контекст. `@neg`/`@abs` тоже точные.
 
 ```nova
-ro third = BigRat.new((1).to_bigint(), (3).to_bigint())!!
-ro sixth = BigRat.new((1).to_bigint(), (6).to_bigint())!!
-assert(third.plus(sixth) == BigRat.new((1).to_bigint(), (2).to_bigint())!!)
+ro third = BigRat.new(1.to_bigint(), 3.to_bigint())!!
+ro sixth = BigRat.new(1.to_bigint(), 6.to_bigint())!!
+assert(third.plus(sixth) == BigRat.new(1.to_bigint(), 2.to_bigint())!!)
 ```
 
 `@div(other)` и `@recip()` оба возвращают `Result[BigRat, DivError]` —
@@ -135,9 +135,9 @@ assert(c.to_str() == "1/2")
 
 ```nova
 ro from_dec = "1.25".to_bigdecimal()!!.to_bigrat()
-assert(from_dec == BigRat.new((5).to_bigint(), (4).to_bigint())!!)
+assert(from_dec == BigRat.new(5.to_bigint(), 4.to_bigint())!!)
 
-ro back = BigRat.new((5).to_bigint(), (4).to_bigint())!!.to_bigdecimal(MathContext.new(10, HalfEven))
+ro back = BigRat.new(5.to_bigint(), 4.to_bigint())!!.to_bigdecimal(MathContext.new(10, HalfEven))
 assert(back == "1.25".to_bigdecimal()!!)
 ```
 
