@@ -3,7 +3,7 @@
 **English** | [Русский](bigdecimal.ru.md)
 
 `BigDecimal` is an arbitrary-precision decimal number — module
-`bignum.bigdecimal`. It has no limb arithmetic of its own; every
+`bignum.bigdecimal`. It carries no big-number arithmetic of its own; every
 operation delegates to [`BigInt`](bigint.md). See [overview.md](overview.md)
 for how it relates to the rest of the `bignum` family.
 

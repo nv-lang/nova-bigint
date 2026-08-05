@@ -18,7 +18,8 @@ type BigInt value {
 ```
 
 - Sign-magnitude: the sign lives in its own `Sign` field, the magnitude in
-  `limbs` — little-endian base-2³² digits, no leading zero limbs.
+  `limbs` — the digits of the number in base 2³², least significant first
+  (each element holds one 32-bit "digit"), with no leading zero digits.
 - Zero is canonical: `sign: Zero, limbs: []` — the only representation of
   zero; every operation normalizes back to it.
 - Value-record on the stack: a copy is a `Sign` enum tag plus a
