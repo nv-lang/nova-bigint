@@ -2,7 +2,7 @@
 // Поверх BigInt (bignum.nv, план 235). План: docs/plans/237-bigfloat.md
 // в репе nova. Вся арифметика — BigInt-свёртки с постраундом.
 //
-// Value-record: копия = BigInt-мантисса (heap-указатель) + exp (8 байт).
+// Именованный кортеж (D215): копия = BigInt-мантисса (значение) + exp (8 байт).
 // Нормализация LAZY — не вызывается в конструкторах/операциях, только
 // в @equal/@hash и явном normalize().
 
@@ -25,26 +25,20 @@ const GUARD = 3
 /// Analogous to the BigDecimal MathContext, but prec is in bits, not decimal digits.
 /// Invariant prec ≥ 2 (otherwise any rounding collapses to 0 or ±∞ by sign).
 #stable(since = "0.1")
-export type PrecisionContext value {
-    prec int
-    rm RoundingMode
-}
+export type PrecisionContext(prec int, rm RoundingMode)
 
 /// Build a PrecisionContext. Panics when prec < 2.
 #stable(since = "0.1")
 export fn PrecisionContext.new(prec int, rm RoundingMode) -> PrecisionContext
     requires prec >= 2
 {
-    { prec, rm }
+    PrecisionContext(prec, rm)
 }
 
 /// Arbitrary-precision binary number: value = mant × 2^{exp}.
 /// The mantissa is an INTEGER (fixed-point, radix point at the right), exp may be < 0.
 #stable(since = "0.1")
-export type BigFloat value {
-    mant BigInt
-    exp int
-}
+export type BigFloat(mant BigInt, exp int)
 
 // ──────────────────────────────────────────────────────────────────────────
 // Приватные хелперы
@@ -99,15 +93,15 @@ fn pow5(k int) -> BigInt => (5).to_bigint().pow(k as uint)
 
 /// Zero (canonical form: mant=0, exp=0).
 #stable(since = "0.1")
-export fn BigFloat.zero() -> BigFloat => { mant: BigInt.zero(), exp: 0 }
+export fn BigFloat.zero() -> BigFloat => BigFloat(BigInt.zero(), 0)
 
 /// One.
 #stable(since = "0.1")
-export fn BigFloat.one() -> BigFloat => { mant: BigInt.one(), exp: 0 }
+export fn BigFloat.one() -> BigFloat => BigFloat(BigInt.one(), 0)
 
 /// Build a BigFloat directly (no normalization).
 #stable(since = "0.1")
-export fn BigFloat.new(mant BigInt, exp int) -> BigFloat => { mant, exp }
+export fn BigFloat.new(mant BigInt, exp int) -> BigFloat => BigFloat(mant, exp)
 
 // ──────────────────────────────────────────────────────────────────────────
 // Нормализация (§2.1) — lazy: удалить конечные нулевые БИТЫ мантиссы
@@ -126,7 +120,7 @@ export fn BigFloat @normalize() -> BigFloat {
         mant = mant.shr(1)
         exp += 1
     }
-    { mant, exp }
+    BigFloat(mant, exp)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
