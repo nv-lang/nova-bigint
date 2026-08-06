@@ -2,7 +2,7 @@
 // Поверх BigInt (bignum.nv, план 235). План: docs/plans/240-bigrat.md
 // в репе nova. Своей арифметики лимбов нет — вся арифметика через BigInt.
 //
-// Value-record: копия = два BigInt (heap-указатели). Нормальная форма
+// Именованный кортеж (D215): копия = два BigInt-значения. Нормальная форма
 // (инвариант КАЖДОЙ операции): den > 0 (знак живёт в num), gcd(|num|, den) == 1,
 // канонический ноль = 0/1. Нормализация ЖАДНАЯ (в каждом конструкторе/операции) —
 // в отличие от lazy-нормализации BigDecimal: для рациональных сокращение —
@@ -25,18 +25,15 @@ import std.runtime.string_builder.{StringBuilder}
 /// Инвариант нормальной формы (поддерживается каждой операцией):
 /// `den > 0`, `gcd(|num|, den) == 1`, ноль = `0/1`.
 #stable(since = "0.1")
-export type BigRat value {
-    num BigInt
-    den BigInt
-}
+export type BigRat(num BigInt, den BigInt)
 
 /// Ноль (каноничная форма: 0/1).
 #stable(since = "0.1")
-export fn BigRat.zero() -> BigRat => { num: BigInt.zero(), den: BigInt.one() }
+export fn BigRat.zero() -> BigRat => BigRat(BigInt.zero(), BigInt.one())
 
 /// Единица (1/1).
 #stable(since = "0.1")
-export fn BigRat.one() -> BigRat => { num: BigInt.one(), den: BigInt.one() }
+export fn BigRat.one() -> BigRat => BigRat(BigInt.one(), BigInt.one())
 
 /// Построить `BigRat` из числителя и знаменателя, приведя к нормальной форме.
 /// `den == 0` → `Err(DivisionByZero)` (паритет `BigInt @div_rem`).
@@ -54,14 +51,14 @@ export fn BigRat.new(num BigInt, den BigInt) -> Result[BigRat, DivError] {
 /// gcd(|num|, den) == 1 (сокращение НОД — через `BigInt @gcd`, Ф.1).
 /// Вызывающий гарантирует `den != 0`.
 fn normalize_rat(num BigInt, den BigInt) -> BigRat {
-    if num.is_zero() { return { num: BigInt.zero(), den: BigInt.one() } }
+    if num.is_zero() { return BigRat(BigInt.zero(), BigInt.one()) }
     ro n = if den.is_neg() { num.neg() } else { num }
     ro d = if den.is_neg() { den.neg() } else { den }
     ro g = n.abs().gcd(d)
     if g.is_one() {
-        { num: n, den: d }
+        BigRat(n, d)
     } else {
-        { num: n.div(g) ?? panic("normalize_rat: g != 0"), den: d.div(g) ?? panic("normalize_rat: g != 0") }
+        BigRat(n.div(g) ?? panic("normalize_rat: g != 0"), d.div(g) ?? panic("normalize_rat: g != 0"))
     }
 }
 
@@ -127,14 +124,14 @@ export fn BigRat @hash() -> u64 {
 #stable(since = "0.1")
 export fn[T Ints] T @to_bigrat() -> BigRat {
     ro bi = @to_bigint()
-    if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } }
+    if bi.is_zero() { BigRat.zero() } else { BigRat(bi, BigInt.one()) }
 }
 
 /// `i128` → `BigRat` (n/1). Явная перегрузка — `i128` не входит в `Ints`.
 #stable(since = "0.1")
 export fn i128 @to_bigrat() -> BigRat {
     ro bi = @to_bigint()
-    if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } }
+    if bi.is_zero() { BigRat.zero() } else { BigRat(bi, BigInt.one()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -156,11 +153,11 @@ export fn BigRat @minus(other BigRat) -> BigRat => @plus(other.neg())
 
 /// `-a`.
 #stable(since = "0.1")
-export fn BigRat @neg() -> BigRat => { num: @num.neg(), @den }
+export fn BigRat @neg() -> BigRat => BigRat(@num.neg(), @den)
 
 /// Абсолютная величина.
 #stable(since = "0.1")
-export fn BigRat @abs() -> BigRat => { num: @num.abs(), @den }
+export fn BigRat @abs() -> BigRat => BigRat(@num.abs(), @den)
 
 /// `a * b`. Оператор `*`.
 #stable(since = "0.1")
@@ -203,7 +200,7 @@ export fn str @to_bigrat() -> Result[BigRat, ParseNumberError] {
     if slash < 0 {
         ro n = @to_bigint()
         return match n {
-            Ok(bi) => Ok(if bi.is_zero() { BigRat.zero() } else { { num: bi, den: BigInt.one() } })
+            Ok(bi) => Ok(if bi.is_zero() { BigRat.zero() } else { BigRat(bi, BigInt.one()) })
             Err(e) => Err(e)
         }
     }
@@ -256,9 +253,9 @@ export fn BigDecimal @to_bigrat() -> BigRat {
     if @scale > 0 {
         normalize_rat(@mant, (10).to_bigint().pow(@scale as uint))
     } else if @scale < 0 {
-        { num: @mant * (10).to_bigint().pow((-@scale) as uint), den: BigInt.one() }
+        BigRat(@mant * (10).to_bigint().pow((-@scale) as uint), BigInt.one())
     } else {
-        { num: @mant, den: BigInt.one() }
+        BigRat(@mant, BigInt.one())
     }
 }
 
@@ -275,7 +272,7 @@ export fn BigRat @to_bigdecimal(mc MathContext) -> BigDecimal {
 export fn BigFloat @to_bigrat() -> BigRat {
     if @mant.is_zero() { return BigRat.zero() }
     if @exp >= 0 {
-        { num: @mant.shl(@exp), den: BigInt.one() }
+        BigRat(@mant.shl(@exp), BigInt.one())
     } else {
         normalize_rat(@mant, BigInt.one().shl(-@exp))
     }

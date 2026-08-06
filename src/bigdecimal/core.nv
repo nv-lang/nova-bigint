@@ -4,9 +4,9 @@
 // в репе nova (план дословно отревьюирован владельцем 2026-07-30 — псевдокод
 // НЕ менять, только переносить в Nova-синтаксис).
 //
-// Value-record: копия = указатель на BigInt-мантиссу (8 байт) + scale (8 байт).
-// Ноль = { mant: BigInt.zero(), scale: 0 } — каноничная форма ПОСЛЕ normalize;
-// без normalize допустимы и другие представления нуля ({0, 5}, {0, -3}, ...) —
+// Именованный кортеж (D215): копия = BigInt-мантисса (значение) + scale (8 байт).
+// Ноль = BigDecimal(BigInt.zero(), 0) — каноничная форма ПОСЛЕ normalize;
+// без normalize допустимы и другие представления нуля ((0, 5), (0, -3), ...) —
 // lazy-normalize (§2.4 плана): normalize НЕ вызывается в конструкторах/операциях,
 // только в @equal/@hash/явном normalize().
 
@@ -33,34 +33,28 @@ export type RoundingMode enum HalfEven | HalfUp | HalfDown | Down | Up | Ceiling
 /// режим округления. `precision` — инвариант ≥ 1 (0 = "unlimited" в V1 не
 /// поддержан: неограниченное 1/3 не терминируется).
 #stable(since = "0.1")
-export type MathContext value {
-    precision int
-    rm RoundingMode
-}
+export type MathContext(precision int, rm RoundingMode)
 
 /// Построить `MathContext`. Panic (contract) при `precision < 1`.
 #stable(since = "0.1")
 export fn MathContext.new(precision int, rm RoundingMode) -> MathContext
     requires precision >= 1
 {
-    { precision, rm }
+    MathContext(precision, rm)
 }
 
 /// Десятичное число произвольной точности: значение = `mant × 10^{-scale}`.
 /// `scale` может быть отрицательным (целое с неявными конечными нулями).
 #stable(since = "0.1")
-export type BigDecimal value {
-    mant BigInt
-    scale int
-}
+export type BigDecimal(mant BigInt, scale int)
 
 /// Построить `BigDecimal` из мантиссы и scale напрямую (без нормализации).
 #stable(since = "0.1")
-export fn BigDecimal.new(mant BigInt, scale int) -> BigDecimal => { mant, scale }
+export fn BigDecimal.new(mant BigInt, scale int) -> BigDecimal => BigDecimal(mant, scale)
 
 /// Ноль (каноничная форма: mant=0, scale=0).
 #stable(since = "0.1")
-export fn BigDecimal.zero() -> BigDecimal => { mant: BigInt.zero(), scale: 0 }
+export fn BigDecimal.zero() -> BigDecimal => BigDecimal(BigInt.zero(), 0)
 
 /// Scale (десятичных знаков масштаба мантиссы) — свойство-читатель (D84).
 /// Отдельное имя `@rescale` для операции «установить scale с округлением»
@@ -350,11 +344,11 @@ export fn BigDecimal @compare(other BigDecimal) -> int {
     }
 }
 
-/// Равенство. Структурное `==` на value-record (D328) здесь НЕВЕРНО — lazy
-/// normalize допускает разные `(mant, scale)` у равных значений (`1.0={10,1}`
-/// vs `1={1,0}`). `@equal` нормализует ОБА операнда перед memberwise-сравнением
+/// Равенство. Структурное `==` (D328) здесь НЕВЕРНО — lazy
+/// normalize допускает разные `(mant, scale)` у равных значений (`1.0=(10,1)`
+/// vs `1=(1,0)`). `@equal` нормализует ОБА операнда перед memberwise-сравнением
 /// (паритет Rust `bigdecimal`; Ф.0-пин №1: `==` диспетчеризует в `@equal`,
-/// подтверждено пробой на value-record).
+/// подтверждено пробой).
 #stable(since = "0.1")
 export fn BigDecimal @equal(other BigDecimal) -> bool {
     ro a = @normalize()
