@@ -85,7 +85,7 @@ fn round_to_precision(mant_abs BigInt, prec int, rm RoundingMode, sign Sign, sti
 }
 
 /// 5^k as a BigInt.
-fn pow5(k int) -> BigInt => (5).to_bigint().pow(k as uint)
+fn pow5(k int) -> BigInt => (5).to_bigint().pow(k)
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы

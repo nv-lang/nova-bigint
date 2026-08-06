@@ -559,9 +559,9 @@ fn manual_round_half_even_dec(q BigRat, p int) -> BigDecimal {
     ro t = p - 1 - e
     ro p10 = (10).to_bigint()
     ro (num, den) = if t >= 0 {
-        (n.times(p10.pow(t as uint)), d)
+        (n.times(p10.pow(t)), d)
     } else {
-        (n, d.times(p10.pow((-t) as uint)))
+        (n, d.times(p10.pow(-t)))
     }
     ro (qq, r) = num.div_rem(den) ?? panic("manual_round_dec: den != 0")
     ro two_r = r.plus(r)

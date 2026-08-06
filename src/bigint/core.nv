@@ -767,7 +767,9 @@ export fn BigInt @is_even() -> bool {
 
 /// `a` в целой степени `n` (n ≥ 0). Бинарное возведение в степень.
 #stable(since = "0.1")
-export fn BigInt @pow(n uint) -> BigInt {
+export fn BigInt @pow(n int) -> BigInt
+    requires n >= 0
+{
     if n == 0 { return BigInt.one() }
     if @is_zero() { return BigInt.zero() }
     if @is_one() { return @ }
