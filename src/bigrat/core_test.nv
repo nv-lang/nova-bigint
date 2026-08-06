@@ -559,7 +559,7 @@ fn manual_round_half_even_dec(q BigRat, p int) -> BigDecimal {
     ro t = p - 1 - e
     ro p10 = (10).to_bigint()
     ro (num, den) = if t >= 0 {
-        (n.times(p10.pow(t as uint)), d)
+        (n.times(p10.pow(t)), d)
     } else {
         (n, d.times(p10.pow((-t) as uint)))
     }

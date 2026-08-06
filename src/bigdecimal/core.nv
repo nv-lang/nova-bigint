@@ -73,7 +73,7 @@ fn sign_num(b BigInt) -> int {
 }
 
 /// `10^k` как BigInt, `k >= 0` во всех местах вызова.
-fn pow10(k int) -> BigInt => (10).to_bigint().pow(k as uint)
+fn pow10(k int) -> BigInt => (10).to_bigint().pow(k)
 
 /// Навесить знак на неотрицательную мантиссу (0 всегда остаётся 0 без знака).
 fn apply_sign(m BigInt, sign int) -> BigInt {
